@@ -7,7 +7,7 @@
 
 robust and efficient LiDAR–Inertial Odometry (LIO) system designed for real-time and large-scale autonomous navigation. This includes an optional loop closure extension (`SuperLIOLoop`) built on a GTSAM iSAM2 pose graph and ICP-based loop verification.
 
-![LIO pipeline overview](./img/lio_pipeline.png)
+![LIO pipeline overview](img/1.png)
 
 ## Quickly Run
 
