@@ -18,12 +18,13 @@ find_package(PCL REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(Ceres REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common io filters cuda)
 
 # Link directories
 link_directories(${PCL_LIBRARY_DIRS})
 
-add_executable(multicamera_lidar_calibration_node src/multicamera_subscriber.cpp)
+add_executable(multicamera_lidar_calibration_node src/multicamera_subscriber.cpp src/edge_calibrator.cpp)
 
 ament_target_dependencies(
   multicamera_lidar_calibration_node
@@ -49,6 +50,7 @@ target_link_libraries(multicamera_lidar_calibration_node
   ${OpenCV_LIBS}
   Eigen3::Eigen
   yaml-cpp
+  Ceres::ceres
 )
 
 install(TARGETS

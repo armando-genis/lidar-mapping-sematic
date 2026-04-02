@@ -57,9 +57,9 @@ include_directories(
 file(GLOB_RECURSE LIO_LIB_SRC "src/lio/*.cpp" "src/ros/*.cpp")
 file(GLOB_RECURSE LIO_LIB_HEADERS "include/lio/*.hpp" "include/lio/*.h")
 
-add_library(lio ${LIO_LIB_SRC} ${LIO_LIB_HEADERS})
+add_library(lio_slam ${LIO_LIB_SRC} ${LIO_LIB_HEADERS})
 
-ament_target_dependencies(lio PUBLIC
+ament_target_dependencies(lio_slam PUBLIC
   rclcpp
   std_msgs
   geometry_msgs
@@ -71,7 +71,7 @@ ament_target_dependencies(lio PUBLIC
   rosidl_default_runtime
 )
 
-target_link_libraries(lio PUBLIC
+target_link_libraries(lio_slam PUBLIC
   Eigen3::Eigen
   ${PCL_LIBRARIES}
   glog
@@ -82,39 +82,39 @@ target_link_libraries(lio PUBLIC
   ${cpp_typesupport_target}
 )
 
-add_executable(super_lio_node src/apps/super_lio_node.cpp)
-target_link_libraries(super_lio_node
-  lio
+add_executable(semantic_lidar_slam_node src/apps/super_lio_node.cpp)
+target_link_libraries(semantic_lidar_slam_node
+  lio_slam
   ${cpp_typesupport_target}
 )
 
-add_executable(relocation_node src/apps/relocation_node.cpp)
-target_link_libraries(relocation_node
-  lio
+add_executable(semantic_lidar_slam_relocation_node src/apps/relocation_node.cpp)
+target_link_libraries(semantic_lidar_slam_relocation_node
+  lio_slam
   ${cpp_typesupport_target}
 )
 
-add_executable(super_lio_loop_node src/apps/super_lio_loop_node.cpp)
-target_link_libraries(super_lio_loop_node
-  lio
+add_executable(semantic_lidar_slam_loop_node src/apps/super_lio_loop_node.cpp)
+target_link_libraries(semantic_lidar_slam_loop_node
+  lio_slam
   gtsam
   ${cpp_typesupport_target}
 )
 
 install(TARGETS
-  lio
+  lio_slam
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
 )
 
 install(TARGETS
-  super_lio_node
-  super_lio_loop_node
+  semantic_lidar_slam_node
+  semantic_lidar_slam_loop_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
 install(TARGETS
-  relocation_node
+  semantic_lidar_slam_relocation_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

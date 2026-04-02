@@ -13,6 +13,32 @@ namespace LI2Sup {
 SuperLIOLoop::SuperLIOLoop()
 {
   kf_positions_.reset(new pcl::PointCloud<pcl::PointXYZ>());
+
+  // ── Lidar rotation matrix (Rz * Ry * Rx) ─────────────────────────────────
+  sensor_rotation_x_ = static_cast<float>(g_lidar_rotation_x);
+  sensor_rotation_y_ = static_cast<float>(g_lidar_rotation_y);
+  sensor_rotation_z_ = static_cast<float>(g_lidar_rotation_z);
+
+  Eigen::Matrix3f R =
+    (Eigen::AngleAxisf(sensor_rotation_z_, Eigen::Vector3f::UnitZ()) *
+     Eigen::AngleAxisf(sensor_rotation_y_, Eigen::Vector3f::UnitY()) *
+     Eigen::AngleAxisf(sensor_rotation_x_, Eigen::Vector3f::UnitX()))
+    .toRotationMatrix();
+
+  rotation_matrix_                   = Eigen::Matrix4f::Identity();
+  rotation_matrix_.block<3, 3>(0, 0) = R;
+}
+
+// ============================================================================
+//  DownSample()  – rotate scan in place, then delegate to base downsampler
+// ============================================================================
+
+void SuperLIOLoop::DownSample()
+{
+  if (scan_undistort_full_ && !scan_undistort_full_->empty()) {
+    pcl::transformPointCloud(*scan_undistort_full_, *scan_undistort_full_, rotation_matrix_);
+  }
+  SuperLIO::DownSample();
 }
 
 SuperLIOLoop::~SuperLIOLoop()

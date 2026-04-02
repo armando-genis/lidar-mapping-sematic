@@ -14,10 +14,10 @@
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
 
-
 #include "CameraLidarExtrinsics.hpp"
 #include "CameraUndistorter.hpp"
 #include "DataLoader.hpp"
+#include "edge_calibrator.hpp"
 
 namespace multicamera_lidar_calibration
 {
@@ -31,25 +31,6 @@ private:
   void imageCallback(sensor_msgs::msg::Image::ConstSharedPtr msg, int camera_id);
   void lidarCallback(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
 
-  int num_cameras_;
-  std::string calib_dir_;
-  std::string lidar_topic_;
-  std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> subscribers_;
-  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_sub_;
-
-  struct LidarFrame {
-    double stamp;
-    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud;
-  };
-
-  std::deque<LidarFrame> lidar_buffer_;
-  std::mutex lidar_mutex_;
-
-  Eigen::Matrix4f rotation_matrix_;
-  float lidar_rotation_x_{0.0f};
-  float lidar_rotation_y_{0.0f};
-  float lidar_rotation_z_{0.0f};
-
   cv::Mat projectLidarOnImage(
       const cv::Mat& img,
       const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud,
@@ -58,8 +39,36 @@ private:
       const cv::Mat& K,
       bool debug_print = false);
 
-  CalibrationLoader calib;
+  void tryCalibrate(int camera_id,
+                    const cv::Mat& undistorted_frame,
+                    const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud);
 
+  // ── Parameters ─────────────────────────────────────────────────────────────
+  int         num_cameras_;
+  std::string calib_dir_;
+  std::string lidar_topic_;
+  bool        calibration_mode_;
+  double      display_scale_;   // resize factor for display (e.g. 0.4)
+
+  // ── Subscribers ────────────────────────────────────────────────────────────
+  std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> subscribers_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr        lidar_sub_;
+
+  // ── LiDAR buffer ───────────────────────────────────────────────────────────
+  struct LidarFrame {
+    double stamp;
+    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud;
+  };
+  std::deque<LidarFrame> lidar_buffer_;
+  std::mutex             lidar_mutex_;
+
+  Eigen::Matrix4f rotation_matrix_;
+  float lidar_rotation_x_{0.0f};
+  float lidar_rotation_y_{0.0f};
+  float lidar_rotation_z_{0.0f};
+
+  CalibrationLoader           calib;
+  std::vector<EdgeCalibrator> calibrators_;
 };
 
 }  // namespace multicamera_lidar_calibration

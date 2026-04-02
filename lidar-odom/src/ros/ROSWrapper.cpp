@@ -40,6 +40,15 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<std::string>("lio.ros.imu_topic", "/imu");
   node.get_parameter("lio.ros.imu_topic", g_imu_topic);
 
+  node.declare_parameter<double>("lio.ros.lidar_rotation_x", 0.0);
+  node.get_parameter("lio.ros.lidar_rotation_x", g_lidar_rotation_x);
+
+  node.declare_parameter<double>("lio.ros.lidar_rotation_y", 0.0);
+  node.get_parameter("lio.ros.lidar_rotation_y", g_lidar_rotation_y);
+
+  node.declare_parameter<double>("lio.ros.lidar_rotation_z", 0.0);
+  node.get_parameter("lio.ros.lidar_rotation_z", g_lidar_rotation_z);
+
   node.declare_parameter<int>("lio.sensor.lidar_type", 0);
   node.get_parameter("lio.sensor.lidar_type", g_lidar_type);
 
@@ -310,7 +319,7 @@ void ROSWrapper::setupIO(){
 
   /// output ======================================
   pub_odom_ = this->create_publisher<nav_msgs::msg::Odometry>(
-      "/lio/odom", 100);
+      "/lio/odom", 40);
 
   pub_imu_odom_ = this->create_publisher<nav_msgs::msg::Odometry>(
       "/lio/imu/odom", 10);

@@ -6,3 +6,5 @@ multicamera_lidar_calibration_node:
     lidar_rotation_x: 0.0
     lidar_rotation_y: 0.20944
     lidar_rotation_z: 0.0
+    calibration_mode: true # set to true to run edge-alignment calibration
+    display_scale: 0.5 # 1920x1080 * 0.5 = 960x540 per panel

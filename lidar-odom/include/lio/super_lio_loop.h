@@ -61,6 +61,7 @@ public:
 
 protected:
   // Called every frame from stateProcess() ─────────────────────────────────
+  void DownSample() override;
   void UpdateMap() override;
   void Output()   override;
 
@@ -131,6 +132,12 @@ private:
 
   // ── ICP voxel filter (only used by the loop thread) ─────────────────────
   pcl::VoxelGrid<BASIC::PointType> icp_ds_filter_;
+
+  // ── Lidar rotation ────────────────────────────────────────────────────────
+  float              sensor_rotation_x_{0.f};
+  float              sensor_rotation_y_{0.f};
+  float              sensor_rotation_z_{0.f};
+  Eigen::Matrix4f    rotation_matrix_{Eigen::Matrix4f::Identity()};
 
   // ── ROS2 publishers (created at init time) ───────────────────────────────
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_loop_constraints_;

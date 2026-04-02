@@ -9,6 +9,9 @@
 
     lio.ros.lidar_topic: "/velodyne_points"
     lio.ros.imu_topic: "/vectornav/imu"
+    lio.ros.lidar_rotation_x: 0.0
+    lio.ros.lidar_rotation_y: 0.20944
+    lio.ros.lidar_rotation_z: 0.0
 
     lio.sensor.lidar_type: 4
     lio.sensor.blind: 2.0

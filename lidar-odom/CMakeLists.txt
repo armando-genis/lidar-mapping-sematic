@@ -6,8 +6,9 @@ set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1 CACHE STRING "Suppress developer warning
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_BUILD_TYPE "Release")
+set(CMAKE_BUILD_TYPE "RelWithDebInfo")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -pthread -fexceptions -flto=auto")
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O1 -g -pthread -fexceptions")
 set(CMAKE_C_FLAGS_RELEASE "-O3 -Wall -fPIC")
 add_definitions(-DROOT=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
 
@@ -54,9 +55,9 @@ include_directories(
 file(GLOB_RECURSE LIO_LIB_SRC "src/lio/*.cpp" "src/ros/*.cpp")
 file(GLOB_RECURSE LIO_LIB_HEADERS "include/lio/*.hpp" "include/lio/*.h")
 
-add_library(lio ${LIO_LIB_SRC} ${LIO_LIB_HEADERS})
+add_library(lio_odom ${LIO_LIB_SRC} ${LIO_LIB_HEADERS})
 
-ament_target_dependencies(lio PUBLIC
+ament_target_dependencies(lio_odom PUBLIC
   rclcpp
   std_msgs
   geometry_msgs
@@ -68,7 +69,7 @@ ament_target_dependencies(lio PUBLIC
   rosidl_default_runtime
 )
 
-target_link_libraries(lio PUBLIC
+target_link_libraries(lio_odom PUBLIC
   Eigen3::Eigen
   ${PCL_LIBRARIES}
   glog
@@ -77,39 +78,39 @@ target_link_libraries(lio PUBLIC
   ${cpp_typesupport_target}
 )
 
-add_executable(super_lio_node src/apps/super_lio_node.cpp)
-target_link_libraries(super_lio_node
-  lio
+add_executable(lidar_odom_node src/apps/super_lio_node.cpp)
+target_link_libraries(lidar_odom_node
+  lio_odom
   ${cpp_typesupport_target}
 )
 
-add_executable(relocation_node src/apps/relocation_node.cpp)
-target_link_libraries(relocation_node
-  lio
+add_executable(lidar_odom_relocation_node src/apps/relocation_node.cpp)
+target_link_libraries(lidar_odom_relocation_node
+  lio_odom
   ${cpp_typesupport_target}
 )
 
-add_executable(super_lio_loop_node src/apps/super_lio_loop_node.cpp)
-target_link_libraries(super_lio_loop_node
-  lio
+add_executable(lidar_odom_loop_node src/apps/super_lio_loop_node.cpp)
+target_link_libraries(lidar_odom_loop_node
+  lio_odom
   gtsam
   ${cpp_typesupport_target}
 )
 
 install(TARGETS
-  lio
+  lio_odom
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
 )
 
 install(TARGETS
-  super_lio_node
-  super_lio_loop_node
+  lidar_odom_node
+  lidar_odom_loop_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
 install(TARGETS
-  relocation_node
+  lidar_odom_relocation_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

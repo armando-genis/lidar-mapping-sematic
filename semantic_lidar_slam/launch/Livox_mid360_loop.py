@@ -18,10 +18,10 @@ def generate_launch_description():
     )
     rviz_flag = LaunchConfiguration('rviz')
 
-    super_lio_loop_node = Node(
+    semantic_lidar_slam_loop_node = Node(
         package='semantic_lidar_slam',
-        executable='super_lio_loop_node',
-        name='super_lio_loop_node',
+        executable='semantic_lidar_slam_loop_node',
+        name='semantic_lidar_slam_loop_node',
         output='screen',
         parameters=[config_yaml],
         arguments=['--ros-args', '--log-level', 'info']
@@ -37,7 +37,7 @@ def generate_launch_description():
 
     ld = LaunchDescription()
     ld.add_action(declare_rviz_arg)
-    ld.add_action(super_lio_loop_node)
+    ld.add_action(semantic_lidar_slam_loop_node)
     ld.add_action(rviz2_node)
 
     return ld
