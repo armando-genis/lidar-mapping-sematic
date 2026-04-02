@@ -406,8 +406,11 @@ void SuperLIO::Propagation_Undistort(){
       pt_full.intensity = pt.intensity;
       double query_time = start_time + pt.offset_time;
       if (query_time > propagate_states_.back().time) {
+        // Point is beyond the last IMU state — use the last propagated state as best approximation.
+        const auto& last_state = propagate_states_.back();
+        V3 t_ei_last = last_state.p - T_end_t;
         V3 raw(pt.x, pt.y, pt.z);
-        V3 eigen_point = TLI_R * raw + TLI_t;
+        V3 eigen_point = R_inv * (last_state.R * (TLI_R * raw + TLI_t) + t_ei_last);
         pt_full.x = eigen_point[0];
         pt_full.y = eigen_point[1];
         pt_full.z = eigen_point[2];
@@ -431,7 +434,8 @@ void SuperLIO::Propagation_Undistort(){
       acc_t = match_iter_n->a;
       w_t = match_iter_n->w;
       M3 R_i = Quat(R_h).slerp(s, Quat(R_t)).toRotationMatrix();
-      V3 t_ei(p_h + v_h * dt + 0.5 * acc_t * dt * dt - T_end_t);
+      double partial_dt = s * dt;
+      V3 t_ei(p_h + v_h * partial_dt + 0.5 * acc_t * partial_dt * partial_dt - T_end_t);
       V3 raw(pt.x, pt.y, pt.z);
       V3 eigen_point = R_inv * (R_i * (TLI_R * raw + TLI_t) + t_ei);
       pt_full.x = eigen_point[0];

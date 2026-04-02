@@ -80,6 +80,13 @@ public:
 
   void SetCov(const COV& cov){ P_ = cov; }
 
+  void ResetForwardState() {
+    forward_time_ = current_time_;
+    fw_R_ = R_;
+    fw_p_ = p_;
+    fw_v_ = v_;
+  }
+
   BASIC::V3 GetGravity() const { return g_; }
 
   bool init_ = false;

@@ -354,7 +354,9 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
     imu_buffer_.clear();
     imu_buffer_.push_back(data);
     last_timestamp_imu_ = data.secs;
-    // eskf_->Reset();   // todo:
+    if (eskf_ && eskf_->init_) {
+      eskf_->ResetForwardState();
+    }
     return;
   }
 
