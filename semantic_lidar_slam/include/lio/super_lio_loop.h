@@ -7,6 +7,7 @@
 #include <atomic>
 #include <vector>
 #include <unordered_map>
+#include <Eigen/Geometry>
 
 // GTSAM – pose graph backend
 #include <gtsam/geometry/Rot3.h>
@@ -28,6 +29,7 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 
 #include "super_lio.h"
+#include "camera_lidar/DataLoader.hpp"
 
 namespace LI2Sup {
 
@@ -61,8 +63,9 @@ public:
 
 protected:
   // Called every frame from stateProcess() ─────────────────────────────────
-  void UpdateMap() override;
-  void Output()   override;
+  void DownSample() override;
+  void UpdateMap()  override;
+  void Output()     override;
 
 private:
   // ── Keyframe management ─────────────────────────────────────────────────
@@ -131,6 +134,16 @@ private:
 
   // ── ICP voxel filter (only used by the loop thread) ─────────────────────
   pcl::VoxelGrid<BASIC::PointType> icp_ds_filter_;
+
+  // ── Lidar rotation ────────────────────────────────────────────────────────
+  float              sensor_rotation_x_{0.f};
+  float              sensor_rotation_y_{0.f};
+  float              sensor_rotation_z_{0.f};
+  Eigen::Matrix4f    rotation_matrix_{Eigen::Matrix4f::Identity()};
+
+  // ── Calibration ───────────────────────────────────────────────────────────
+  std::string       calib_dir_;
+  CalibrationLoader calib_;
 
   // ── ROS2 publishers (created at init time) ───────────────────────────────
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_loop_constraints_;

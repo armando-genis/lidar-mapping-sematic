@@ -29,6 +29,7 @@ find_package(Glog REQUIRED)
 find_package(basic REQUIRED)
 find_package(GTSAM REQUIRED QUIET)
 find_package(OpenCV REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 
 rosidl_generate_interfaces(${PROJECT_NAME}
@@ -77,6 +78,7 @@ target_link_libraries(lio PUBLIC
   pthread
   gtsam
   ${OpenCV_LIBS}
+  yaml-cpp
   ${cpp_typesupport_target}
 )
 

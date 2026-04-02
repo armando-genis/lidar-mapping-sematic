@@ -43,6 +43,18 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<std::string>("lio.ros.image_topic", "");
   node.get_parameter("lio.ros.image_topic", g_image_topic);
 
+  node.declare_parameter<std::string>("lio.ros.image_extrinsic_path", "");
+  node.get_parameter("lio.ros.image_extrinsic_path", g_calib_dir);
+
+  node.declare_parameter<double>("lio.ros.lidar_rotation_x", 0.0);
+  node.get_parameter("lio.ros.lidar_rotation_x", g_lidar_rotation_x);
+
+  node.declare_parameter<double>("lio.ros.lidar_rotation_y", 0.0);
+  node.get_parameter("lio.ros.lidar_rotation_y", g_lidar_rotation_y);
+
+  node.declare_parameter<double>("lio.ros.lidar_rotation_z", 0.0);
+  node.get_parameter("lio.ros.lidar_rotation_z", g_lidar_rotation_z);
+
   node.declare_parameter<int>("lio.sensor.lidar_type", 0);
   node.get_parameter("lio.sensor.lidar_type", g_lidar_type);
 
@@ -294,8 +306,8 @@ void ROSWrapper::setupIO(){
                  .best_effort()
                  .durability_volatile();
 
-  auto lidar_qos = rclcpp::QoS(rclcpp::KeepLast(20))
-                   .best_effort()
+  auto lidar_qos = rclcpp::QoS(rclcpp::KeepLast(10))
+                   .reliable()
                    .durability_volatile();
 
   sub_imu_ = this->create_subscription<sensor_msgs::msg::Imu>(
@@ -586,8 +598,8 @@ bool ROSWrapper::sync_measure(MeasureGroup& meas){
         best = &img;
       }
     }
-    // Accept within half a frame period at 15fps (~33ms).
-    if (best_dt < 0.033 && best != nullptr) {
+    // Accept within 500ms — camera and lidar clocks have a ~350ms fixed offset in the bag.
+    if (best_dt < 0.5 && best != nullptr) {
       meas.image_frame = best->frame;   // shallow copy (ref-counted)
       meas.image_stamp = best->stamp;
     }
@@ -701,9 +713,9 @@ void ROSWrapper::pub_cloud_body_pose(const CloudPtr& pc,
   const NavState& state)
 {
   static auto pub_cloud_body_pose_ =
-    this->create_publisher<super_lio::msg::CloudPose>(
+    this->create_publisher<semantic_lidar_slam::msg::CloudPose>(
         "/lio/body/cloud_pose", 10);
-  super_lio::msg::CloudPose cloud_pose;
+  semantic_lidar_slam::msg::CloudPose cloud_pose;
   pcl::toROSMsg(*pc, cloud_pose.cloud);
   cloud_pose.cloud.header.stamp = toRosTime(state.timestamp); 
   cloud_pose.pose.position.x = state.p[0];
@@ -723,9 +735,9 @@ void ROSWrapper::pub_cloud_world_pose(const CloudPtr& pc,
    const NavState& state)
 {
   static auto pub_cloud_world_pose_ =
-    this->create_publisher<super_lio::msg::CloudPose>(
+    this->create_publisher<semantic_lidar_slam::msg::CloudPose>(
         "/lio/world/cloud_pose", 10);
-  super_lio::msg::CloudPose cloud_pose;
+  semantic_lidar_slam::msg::CloudPose cloud_pose;
   pcl::toROSMsg(*pc, cloud_pose.cloud);
   cloud_pose.cloud.header.stamp = toRosTime(state.timestamp);  
   cloud_pose.pose.position.x = state.p[0];

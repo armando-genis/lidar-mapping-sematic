@@ -36,6 +36,8 @@ source install/setup.bash
 colcon build --packages-select lidar_odom
 # semantic slam
 colcon build --packages-select semantic_lidar_slam
+#
+colcon build --packages-select multicamera_lidar_calibration
 
 source install/setup.bash
 
@@ -43,6 +45,7 @@ ros2 launch lidar_odom Livox_mid360_loop.py
 
 ros2 launch semantic_lidar_slam Livox_mid360_loop.py
 
+ros2 launch multicamera_lidar_calibration multiprocessing.launch.py
 
 ```
 

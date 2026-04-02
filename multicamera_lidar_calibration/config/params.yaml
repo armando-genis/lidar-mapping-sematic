@@ -1,0 +1,8 @@
+multicamera_lidar_calibration_node:
+  ros__parameters:
+    num_cameras: 1
+    lidar_topic: /velodyne_points
+    calib_dir: /workspace/navpilot_ws/src/multimlprocessing/camera_configs
+    lidar_rotation_x: 0.0
+    lidar_rotation_y: 0.20944
+    lidar_rotation_z: 0.0

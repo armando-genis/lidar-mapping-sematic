@@ -24,6 +24,11 @@ namespace LI2Sup{
   string g_imu_topic;
   string g_lidar_topic;
   string g_image_topic = "";
+  string g_calib_dir   = "";
+
+  double g_lidar_rotation_x = 0.0;
+  double g_lidar_rotation_y = 0.0;
+  double g_lidar_rotation_z = 0.0;
 
   int    g_lidar_type;
   float  g_blind2;

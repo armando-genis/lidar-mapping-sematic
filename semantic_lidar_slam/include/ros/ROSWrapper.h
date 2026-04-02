@@ -34,8 +34,8 @@
 #include <pcl_conversions/pcl_conversions.h>
 
 /// msgs
-#include "super_lio/msg/cloud_pose.hpp"
-#include "super_lio/msg/cloud_pose2.hpp"
+#include "semantic_lidar_slam/msg/cloud_pose.hpp"
+#include "semantic_lidar_slam/msg/cloud_pose2.hpp"
 
 
 #include "lio/params.h"

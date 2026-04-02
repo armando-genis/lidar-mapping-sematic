@@ -44,7 +44,7 @@ protected:
   virtual bool kf_init();
   virtual bool map_init();
   void Propagation_Undistort();
-  void DownSample();
+  virtual void DownSample();
   void Observe();
   virtual void UpdateMap();
   virtual void Output();

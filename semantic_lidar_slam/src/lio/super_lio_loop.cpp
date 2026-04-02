@@ -1,9 +1,62 @@
 
 #include "lio/super_lio_loop.h"
+#include "lio/params.h"
 #include "basic/logs.h"
 #include <opencv2/highgui.hpp>
 
 using namespace BASIC;
+
+namespace {
+
+static cv::Mat projectLidarOnImage(
+    const cv::Mat& img,
+    const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud,
+    const cv::Mat& R,
+    const cv::Mat& t,
+    const cv::Mat& K)
+{
+  cv::Mat out = img.clone();
+  if (!cloud || cloud->points.empty()) return out;
+
+  const double fx = K.at<double>(0, 0);
+  const double fy = K.at<double>(1, 1);
+  const double cx = K.at<double>(0, 2);
+  const double cy = K.at<double>(1, 2);
+  const int h = out.rows;
+  const int w = out.cols;
+
+  for (const auto& p : cloud->points) {
+    cv::Mat pt = (cv::Mat_<double>(3, 1) << p.x, p.y, p.z);
+    cv::Mat cam = R * pt + t;
+
+    double x = cam.at<double>(0);
+    double y = cam.at<double>(1);
+    double z = cam.at<double>(2);
+
+    if (z <= 0.1) continue;
+
+    int u = static_cast<int>(fx * x / z + cx + 0.5);
+    int v = static_cast<int>(fy * y / z + cy + 0.5);
+
+    if (u < 0 || u >= w || v < 0 || v >= h) continue;
+
+    // Color by lidar-frame X (car forward axis): blue=close, green=mid, red=far
+    float t = std::clamp(p.x / 30.0f, 0.0f, 1.0f);
+    cv::Scalar color;
+    if (t < 0.5f) {
+      float s = t * 2.0f;
+      color = cv::Scalar(static_cast<int>(255 * (1.0f - s)), static_cast<int>(255 * s), 0);
+    } else {
+      float s = (t - 0.5f) * 2.0f;
+      color = cv::Scalar(0, static_cast<int>(255 * (1.0f - s)), static_cast<int>(255 * s));
+    }
+    cv::circle(out, {u, v}, 2, color, -1);
+  }
+
+  return out;
+}
+
+}  // namespace
 
 namespace LI2Sup {
 
@@ -14,6 +67,24 @@ namespace LI2Sup {
 SuperLIOLoop::SuperLIOLoop()
 {
   kf_positions_.reset(new pcl::PointCloud<pcl::PointXYZ>());
+
+  // ── Lidar rotation matrix (Rz * Ry * Rx) ─────────────────────────────────
+  sensor_rotation_x_ = static_cast<float>(g_lidar_rotation_x);
+  sensor_rotation_y_ = static_cast<float>(g_lidar_rotation_y);
+  sensor_rotation_z_ = static_cast<float>(g_lidar_rotation_z);
+
+  Eigen::Matrix3f R =
+    (Eigen::AngleAxisf(sensor_rotation_z_, Eigen::Vector3f::UnitZ()) *
+     Eigen::AngleAxisf(sensor_rotation_y_, Eigen::Vector3f::UnitY()) *
+     Eigen::AngleAxisf(sensor_rotation_x_, Eigen::Vector3f::UnitX()))
+    .toRotationMatrix();
+
+  rotation_matrix_                   = Eigen::Matrix4f::Identity();
+  rotation_matrix_.block<3, 3>(0, 0) = R;
+
+  // ── Camera calibration ────────────────────────────────────────────────────
+  calib_dir_ = g_calib_dir;
+  calib_.load(calib_dir_);
 }
 
 SuperLIOLoop::~SuperLIOLoop()
@@ -24,6 +95,18 @@ SuperLIOLoop::~SuperLIOLoop()
     loop_thread_.join();
   }
   delete isam_;
+}
+
+// ============================================================================
+//  DownSample()  – rotate scan in place, then delegate to base downsampler
+// ============================================================================
+
+void SuperLIOLoop::DownSample()
+{
+  if (scan_undistort_full_ && !scan_undistort_full_->empty()) {
+    pcl::transformPointCloud(*scan_undistort_full_, *scan_undistort_full_, rotation_matrix_);
+  }
+  SuperLIO::DownSample();
 }
 
 // ============================================================================
@@ -98,7 +181,45 @@ void SuperLIOLoop::Output()
 
   // ── Show synced camera frame if available ──────────────────────────────
   if (!measures_.image_frame.empty()) {
-    cv::imshow("Camera", measures_.image_frame);
+    cv::Mat frame = measures_.image_frame;
+    constexpr int camera_id = 0;
+
+    if (static_cast<size_t>(camera_id) < calib_.camera_array.size()) {
+      auto& cam = calib_.camera_array[camera_id];
+      if (cam) { cam->ensure_size(frame.cols, frame.rows); frame = cam->undistort(frame); }
+    }
+
+    // Project lidar cloud onto the undistorted frame.
+    if (static_cast<size_t>(camera_id) < calib_.extrinsics_array.size()) {
+      auto& ext = calib_.extrinsics_array[camera_id];
+      if (ext && scan_undistort_full_ && !scan_undistort_full_->empty()) {
+        CloudPtr cloud_copy(new PointCloudType(*scan_undistort_full_));
+
+        // R_il, t_il : IMU→Lidar (inverse of g_lidar_imu which is Lidar→IMU)
+        const Eigen::Matrix3d R_il = g_lidar_imu.R_.cast<double>().transpose();
+        const Eigen::Vector3d t_il = -R_il * g_lidar_imu.t_.cast<double>();
+
+        cv::Mat R_il_cv(3, 3, CV_64F);
+        cv::Mat t_il_cv(3, 1, CV_64F);
+        for (int i = 0; i < 3; i++)
+          for (int j = 0; j < 3; j++)
+            R_il_cv.at<double>(i, j) = R_il(i, j);
+        t_il_cv.at<double>(0) = t_il[0];
+        t_il_cv.at<double>(1) = t_il[1];
+        t_il_cv.at<double>(2) = t_il[2];
+
+        // Combined extrinsic: cam = R_cam_lidar * (R_il * p_imu + t_il) + t_cam_lidar
+        cv::Mat R_cam_lidar = ext->get_R_opencv();
+        cv::Mat t_cam_lidar = ext->get_t_opencv();
+        cv::Mat R_combined  = R_cam_lidar * R_il_cv;
+        cv::Mat t_combined  = R_cam_lidar * t_il_cv + t_cam_lidar;
+
+        cv::Mat K = calib_.camera_array[camera_id]->get_K();
+        frame = projectLidarOnImage(frame, cloud_copy, R_combined, t_combined, K);
+      }
+    }
+
+    cv::imshow("Camera", frame);
     cv::waitKey(1);
   }
 
