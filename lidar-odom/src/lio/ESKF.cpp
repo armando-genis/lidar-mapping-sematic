@@ -229,8 +229,8 @@ const int STATE_DIM = 18;
 bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
   SO3 R_0 = R_;
 
-  M6 HTVH;     // H^T * V^(-1) * H
-  V6 HTVr;     // H^T * V^(-1) * residuals
+  M6 HTVH = M6::Zero();   // H^T * V^(-1) * H
+  V6 HTVr = V6::Zero();   // H^T * V^(-1) * residuals
   M18 Pk, Qk;
 
   need_converge_ = false;

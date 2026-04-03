@@ -200,8 +200,10 @@ bool SuperLIO::map_init(){
   ivox_->insert(points_world_v3_);
   kf_->SetLastObsTime(measures_.lidar.end_time);
 
-  // 20 Hz for 1.0 seconds. Integral coverage area > 70%
-  if(frame_num_ > 3){
+  // Wait until at least 300ms of scan data has been accumulated regardless of LiDAR frequency.
+  static double map_init_start_time = measures_.lidar.end_time;
+  if (measures_.lidar.end_time - map_init_start_time >= 0.3) {
+    map_init_start_time = measures_.lidar.end_time; // reset for next init cycle
     g_flg_map_init = false;
     return true;
   }
@@ -385,6 +387,14 @@ void SuperLIO::Propagation_Undistort(){
     propagate_states_.emplace_back(kf_->GetDynamicState());
   }
 
+  if (measures_.imu.empty()) {
+    LOG(WARNING) << YELLOW
+      << " ---> [Undistort] frame=" << frame_num_
+      << " meas.imu is EMPTY — no IMU propagation this scan."
+      << " lidar.end_time=" << std::fixed << std::setprecision(6) << measures_.lidar.end_time
+      << RESET;
+  }
+
   static const M3 TLI_R = g_lidar_imu.R_;
   static const V3 TLI_t = g_lidar_imu.t_;
   const SE3 T_end = kf_->GetSE3();
@@ -394,23 +404,43 @@ void SuperLIO::Propagation_Undistort(){
   auto& raw_pc = measures_.lidar.pc;
 
   std::size_t ptsize = raw_pc->points.size();
-  scan_undistort_full_->resize(ptsize); 
+  scan_undistort_full_->resize(ptsize);
+
+  std::atomic<int> n_underflow{0}, n_overflow{0}, n_bracket_fallback{0};
 
   tbb::parallel_for(
   tbb::blocked_range<size_t>(0, ptsize),
   [&](const tbb::blocked_range<size_t>& r) {
     M3 R_h, R_t; V3 p_h, v_h, acc_t, w_t;
-    for (size_t idx = r.begin(); idx < r.end(); ++idx) {  
+    for (size_t idx = r.begin(); idx < r.end(); ++idx) {
       auto& pt_full = scan_undistort_full_->points[idx];
       const auto& pt = raw_pc->points[idx];
       pt_full.intensity = pt.intensity;
       double query_time = start_time + pt.offset_time;
-      if (query_time > propagate_states_.back().time) {
-        // Point is beyond the last IMU state — use the last propagated state as best approximation.
-        const auto& last_state = propagate_states_.back();
-        V3 t_ei_last = last_state.p - T_end_t;
+      if (query_time <= propagate_states_.front().time) {
+        // Point is before the first IMU state — use the first propagated state.
+        n_underflow.fetch_add(1, std::memory_order_relaxed);
+        const auto& first_state = propagate_states_.front();
+        V3 t_ei_first = first_state.p - T_end_t;
         V3 raw(pt.x, pt.y, pt.z);
-        V3 eigen_point = R_inv * (last_state.R * (TLI_R * raw + TLI_t) + t_ei_last);
+        V3 eigen_point = R_inv * (first_state.R * (TLI_R * raw + TLI_t) + t_ei_first);
+        pt_full.x = eigen_point[0];
+        pt_full.y = eigen_point[1];
+        pt_full.z = eigen_point[2];
+        continue;
+      }
+      if (query_time > propagate_states_.back().time) {
+        // Point is beyond the last IMU state — extrapolate forward using last known
+        // angular velocity (body frame) and linear acceleration (world frame).
+        n_overflow.fetch_add(1, std::memory_order_relaxed);
+        const auto& last_state = propagate_states_.back();
+        scalar delta_t = static_cast<scalar>(query_time - last_state.time);
+        M3 R_extrap = last_state.R * SO3::Exp(last_state.w, delta_t).R_;
+        V3 p_extrap = last_state.p + last_state.v * delta_t
+                    + static_cast<scalar>(0.5) * last_state.a * delta_t * delta_t;
+        V3 t_ei_extrap = p_extrap - T_end_t;
+        V3 raw(pt.x, pt.y, pt.z);
+        V3 eigen_point = R_inv * (R_extrap * (TLI_R * raw + TLI_t) + t_ei_extrap);
         pt_full.x = eigen_point[0];
         pt_full.y = eigen_point[1];
         pt_full.z = eigen_point[2];
@@ -419,12 +449,19 @@ void SuperLIO::Propagation_Undistort(){
       auto match_iter = propagate_states_.begin();
       for (auto iter = propagate_states_.begin(); iter != propagate_states_.end(); ++iter) {
         auto next_iter = std::next(iter);
+        if (next_iter == propagate_states_.end()) break;
         if (iter->time < query_time && next_iter->time >= query_time) {
           match_iter = iter;
           break;
         }
       }
       auto match_iter_n = std::next(match_iter);
+      // Guard against dereferencing end() in the degenerate case (e.g. duplicate IMU timestamps).
+      if (match_iter_n == propagate_states_.end()) {
+        n_bracket_fallback.fetch_add(1, std::memory_order_relaxed);
+        if (match_iter != propagate_states_.begin()) --match_iter;
+        match_iter_n = std::next(match_iter);
+      }
       double dt = match_iter_n->time - match_iter->time;
       double s = (query_time - match_iter->time) / dt;
       R_h = match_iter->R;
@@ -443,6 +480,28 @@ void SuperLIO::Propagation_Undistort(){
       pt_full.z = eigen_point[2];
     }
   });
+
+  // Underflow and bracket fallback are always abnormal — log immediately.
+  // Overflow below (IMU_period / scan_duration + 5% margin) is normal for spinning LiDARs.
+  //   10 Hz scan (100ms): 0.01/0.10 + 0.05 = 0.15  (15%)
+  //   20 Hz scan ( 50ms): 0.01/0.05 + 0.05 = 0.25  (25%)
+  const float overflow_ratio = (ptsize > 0) ? (float)n_overflow.load() / (float)ptsize : 0.f;
+  const double scan_duration = measures_.lidar.end_time - measures_.lidar.start_time;
+  const float overflow_threshold = (scan_duration > 0.001)
+      ? static_cast<float>(0.01 / scan_duration) + 0.05f
+      : 0.25f;
+  const bool overflow_abnormal = (overflow_ratio > overflow_threshold);
+  if (n_underflow > 0 || overflow_abnormal || n_bracket_fallback > 0) {
+    LOG(WARNING) << YELLOW
+      << " ---> [Undistort] frame=" << frame_num_
+      << " imu_states=" << propagate_states_.size()
+      << " underflow_pts=" << n_underflow.load()
+      << " overflow_pts=" << n_overflow.load()
+      << " (" << std::fixed << std::setprecision(1) << overflow_ratio * 100.f << "%)"
+      << " bracket_fallback_pts=" << n_bracket_fallback.load()
+      << " (total_pts=" << ptsize << ")"
+      << RESET;
+  }
 }
 
 

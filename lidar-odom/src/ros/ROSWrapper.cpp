@@ -521,13 +521,22 @@ bool ROSWrapper::sync_measure(MeasureGroup& meas){
     return false;
   }
 
-  double imu_time = imu_buffer_.front().secs;
   meas.imu.clear();
-  while ((!imu_buffer_.empty()) && (imu_time < meas.lidar.end_time)) {
-    imu_time = imu_buffer_.front().secs;
+  while (!imu_buffer_.empty()) {
+    double imu_time = imu_buffer_.front().secs;
     if (imu_time > meas.lidar.end_time) break;
     meas.imu.push_back(imu_buffer_.front());
     imu_buffer_.pop_front();
+  }
+
+  if (meas.imu.empty()) {
+    LOG(WARNING) << YELLOW
+      << " ---> [SyncMeasure] IMU batch is EMPTY for lidar scan"
+      << " [" << std::fixed << std::setprecision(6) << meas.lidar.start_time
+      << " -> " << meas.lidar.end_time << "]"
+      << " imu_buf_size=" << imu_buffer_.size()
+      << " last_ts_imu=" << last_timestamp_imu_
+      << RESET;
   }
 
   last_timestamp_lidar_ = meas.lidar.end_time;
