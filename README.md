@@ -39,6 +39,8 @@ colcon build --packages-select semantic_lidar_slam
 #
 colcon build --packages-select multicamera_lidar_calibration
 
+colcon build --packages-select lio_localization
+
 source install/setup.bash
 
 ros2 launch lidar_odom Livox_mid360_loop.py
@@ -46,6 +48,8 @@ ros2 launch lidar_odom Livox_mid360_loop.py
 ros2 launch semantic_lidar_slam Livox_mid360_loop.py
 
 ros2 launch multicamera_lidar_calibration multiprocessing.launch.py
+
+ros2 launch lio_localization relocation.py
 
 ```
 
@@ -117,10 +121,10 @@ The system adapts automatically to different LiDAR scan rates. No code changes a
 **Current setup: 10 Hz (Velodyne 32)**
 
 | Scan rate | Scan duration | IMU states/scan (100 Hz IMU) | Normal overflow | Overflow warning threshold |
-|-----------|--------------|------------------------------|-----------------|---------------------------|
-| 10 Hz     | 100 ms       | ~11                          | 5–15 %          | ~15 % *(auto)*            |
-| 20 Hz     | 50 ms        | ~6                           | 10–25 %         | ~25 % *(auto)*            |
-| 40 Hz     | 25 ms        | ~3–4                         | 20–45 %         | ~45 % *(auto)*            |
+| --------- | ------------- | ---------------------------- | --------------- | -------------------------- |
+| 10 Hz     | 100 ms        | ~11                          | 5–15 %          | ~15 % _(auto)_             |
+| 20 Hz     | 50 ms         | ~6                           | 10–25 %         | ~25 % _(auto)_             |
+| 40 Hz     | 25 ms         | ~3–4                         | 20–45 %         | ~45 % _(auto)_             |
 
 **What "overflow" means:** The last IMU packet in a scan batch always lands 0–10 ms before the scan end (random phase gap at 100 Hz IMU). Points in that uncovered tail are extrapolated from the last known IMU state. This is expected and handled automatically — the warning only fires when overflow exceeds `IMU_period / scan_duration + 5 %`, which flags genuinely missing IMU data.
 
@@ -132,14 +136,14 @@ The system adapts automatically to different LiDAR scan rates. No code changes a
 # No frequency parameter needed — the system detects it from incoming scans.
 # Review these if you change the LiDAR:
 
-lio.ros.lidar_topic: "/velodyne_points"   # topic name for your sensor
-lio.sensor.lidar_type: 4                  # 2=HESAI16, 3=VELO16, 4=VELO32, 6=OUSTER
+lio.ros.lidar_topic: "/velodyne_points" # topic name for your sensor
+lio.sensor.lidar_type: 4 # 2=HESAI16, 3=VELO16, 4=VELO32, 6=OUSTER
 
 # At higher frequency you may want a tighter keyframe distance (less travel per frame):
-lio.loop.keyframe_add_dist: 1.0           # m — consider 0.5 m at 20 Hz+ for denser keyframes
+lio.loop.keyframe_add_dist: 1.0 # m — consider 0.5 m at 20 Hz+ for denser keyframes
 
 # Local map prune can run more often at higher frequency (more keyframes/second):
-lio.local_map.prune_interval: 10          # keyframes between prunes — keep or reduce at 20 Hz+
+lio.local_map.prune_interval: 10 # keyframes between prunes — keep or reduce at 20 Hz+
 ```
 
 **RViz topics published by SuperLIOLoop:**

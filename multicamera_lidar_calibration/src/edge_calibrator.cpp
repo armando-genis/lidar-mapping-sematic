@@ -1,5 +1,4 @@
 #include "edge_calibrator.hpp"
-
 #include <iostream>
 #include <limits>
 
@@ -7,7 +6,7 @@ namespace multicamera_lidar_calibration
 {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constructors  (defined here so Config{} is fully known)
+// Constructors
 // ─────────────────────────────────────────────────────────────────────────────
 EdgeCalibrator::EdgeCalibrator()
   : cfg_(Config{})
@@ -24,12 +23,10 @@ cv::Mat EdgeCalibrator::extractImageEdges(const cv::Mat& undistorted,
                                           int low, int high)
 {
   cv::Mat gray, blurred, edges;
-
   if (undistorted.channels() == 3)
     cv::cvtColor(undistorted, gray, cv::COLOR_BGR2GRAY);
   else
     gray = undistorted.clone();
-
   cv::GaussianBlur(gray, blurred, {5, 5}, 1.5);
   cv::Canny(blurred, edges, low, high);
   return edges;
@@ -37,20 +34,14 @@ cv::Mat EdgeCalibrator::extractImageEdges(const cv::Mat& undistorted,
 
 cv::Mat EdgeCalibrator::buildDistanceMap(const cv::Mat& edges)
 {
-  // Invert: edge pixels → 0, background → 255  (distanceTransform needs 0 = obstacle)
   cv::Mat inv;
   cv::bitwise_not(edges, inv);
-
   cv::Mat dist;
   cv::distanceTransform(inv, dist, cv::DIST_L2, cv::DIST_MASK_PRECISE);
-
-  // Normalise to [0, 1] so far-from-edge = 1 (high cost), on-edge = 0 (zero cost)
   double maxVal = 0.0;
   cv::minMaxLoc(dist, nullptr, &maxVal);
-  if (maxVal > 0.0)
-    dist /= static_cast<float>(maxVal);
-
-  return dist;  // CV_32F
+  if (maxVal > 0.0) dist /= static_cast<float>(maxVal);
+  return dist;  // CV_32F, 0=on edge, 1=far
 }
 
 std::vector<pcl::PointXYZI>
@@ -64,23 +55,19 @@ EdgeCalibrator::extractLidarEdgePoints(
   const double cx = K.at<double>(0, 2);
   const double cy = K.at<double>(1, 2);
 
-  // ── Build a depth image by projecting the cloud ───────────────────────────
   cv::Mat depth_img(h, w, CV_32F, cv::Scalar(0.f));
 
-  // We also need to remember which cloud index maps to each pixel
-  // (keep closest point per pixel)
   struct PixelHit { int idx; float z; };
-  std::vector<PixelHit> hit_map(static_cast<size_t>(w * h), {-1, std::numeric_limits<float>::max()});
+  std::vector<PixelHit> hit_map(static_cast<size_t>(w * h),
+                                {-1, std::numeric_limits<float>::max()});
 
   for (int i = 0; i < static_cast<int>(cloud->size()); ++i)
   {
     const auto& p = cloud->points[i];
-    cv::Mat pt = (cv::Mat_<double>(3, 1) << p.x, p.y, p.z);
+    cv::Mat pt  = (cv::Mat_<double>(3, 1) << p.x, p.y, p.z);
     cv::Mat cam = R * pt + t;
-
-    double z = cam.at<double>(2);
+    double z    = cam.at<double>(2);
     if (z < 0.1) continue;
-
     int u = static_cast<int>(fx * cam.at<double>(0) / z + cx + 0.5);
     int v = static_cast<int>(fy * cam.at<double>(1) / z + cy + 0.5);
     if (u < 0 || u >= w || v < 0 || v >= h) continue;
@@ -94,16 +81,13 @@ EdgeCalibrator::extractLidarEdgePoints(
     }
   }
 
-  // ── Depth-gradient → find discontinuities ────────────────────────────────
   cv::Mat grad_x, grad_y, grad_mag;
   cv::Sobel(depth_img, grad_x, CV_32F, 1, 0, 3);
   cv::Sobel(depth_img, grad_y, CV_32F, 0, 1, 3);
   cv::magnitude(grad_x, grad_y, grad_mag);
 
-  // ── Collect cloud points that project onto depth edges ───────────────────
   std::vector<pcl::PointXYZI> edge_pts;
   for (int v = 0; v < h; ++v)
-  {
     for (int u = 0; u < w; ++u)
     {
       const auto& hit = hit_map[static_cast<size_t>(v * w + u)];
@@ -111,9 +95,41 @@ EdgeCalibrator::extractLidarEdgePoints(
       if (grad_mag.at<float>(v, u) > static_cast<float>(depth_thresh))
         edge_pts.push_back(cloud->points[hit.idx]);
     }
-  }
 
   return edge_pts;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// isSane — rejects physically implausible optimisation results
+// ─────────────────────────────────────────────────────────────────────────────
+bool EdgeCalibrator::isSane(const cv::Mat& R_init, const cv::Mat& t_init,
+                             const cv::Mat& R_out,  const cv::Mat& t_out) const
+{
+  // ── Translation change ────────────────────────────────────────────────────
+  cv::Mat dt = t_out - t_init;
+  double t_change = cv::norm(dt);
+  if (t_change > cfg_.max_translation_m)
+  {
+    std::cerr << "[EdgeCalibrator] SANITY FAIL: translation moved "
+              << t_change << " m (max " << cfg_.max_translation_m << " m)\n";
+    return false;
+  }
+
+  // ── Rotation change (as angle of R_out * R_init^T) ────────────────────────
+  cv::Mat dR = R_out * R_init.t();
+  cv::Mat rvec;
+  cv::Rodrigues(dR, rvec);
+  double angle_deg = cv::norm(rvec) * 180.0 / CV_PI;
+  if (angle_deg > cfg_.max_rotation_deg)
+  {
+    std::cerr << "[EdgeCalibrator] SANITY FAIL: rotation changed "
+              << angle_deg << " deg (max " << cfg_.max_rotation_deg << " deg)\n";
+    return false;
+  }
+
+  std::cout << "[EdgeCalibrator] Sanity OK: dt=" << t_change
+            << " m, dR=" << angle_deg << " deg\n";
+  return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -128,7 +144,7 @@ bool EdgeCalibrator::addFrame(
 {
   if (static_cast<int>(frames_.size()) >= cfg_.max_frames)
   {
-    std::cout << "[EdgeCalibrator] Max frames reached (" << cfg_.max_frames << "), skipping.\n";
+    std::cout << "[EdgeCalibrator] Max frames reached, skipping.\n";
     return false;
   }
 
@@ -162,7 +178,7 @@ bool EdgeCalibrator::solve(
     return false;
   }
 
-  // ── Convert initial R (3×3) → axis-angle ─────────────────────────────────
+  // ── Convert initial R to axis-angle ──────────────────────────────────────
   double angle_axis[3];
   {
     cv::Mat rvec;
@@ -178,18 +194,17 @@ bool EdgeCalibrator::solve(
     t_init.at<double>(2)
   };
 
-  // ── Build Ceres problem ───────────────────────────────────────────────────
+  // ── Build problem ─────────────────────────────────────────────────────────
   ceres::Problem problem;
   int total_residuals = 0;
 
   for (auto& frame : frames_)
   {
-    // Recompute current R, t from optimisation variables for edge extraction
+    // Use current estimate to project lidar and extract edge points
     cv::Mat R_curr;
     cv::Mat rvec_curr = (cv::Mat_<double>(3, 1)
                           << angle_axis[0], angle_axis[1], angle_axis[2]);
     cv::Rodrigues(rvec_curr, R_curr);
-
     cv::Mat t_curr = (cv::Mat_<double>(3, 1)
                        << translation[0], translation[1], translation[2]);
 
@@ -202,10 +217,9 @@ bool EdgeCalibrator::solve(
     {
       problem.AddResidualBlock(
           EdgeAlignCost::Create(frame.distance_map, K_stored_, edge_pts[i]),
-          nullptr,       // no robust loss — add ceres::HuberLoss(1.0) if needed
+          new ceres::HuberLoss(0.5),  // robust loss to ignore outliers
           angle_axis,
-          translation
-      );
+          translation);
       ++total_residuals;
     }
   }
@@ -213,9 +227,14 @@ bool EdgeCalibrator::solve(
   if (verbose)
     std::cout << "[EdgeCalibrator] Total residuals: " << total_residuals << "\n";
 
-  if (total_residuals == 0)
+  // ── Guard: reject if too few residuals (underconstrained) ────────────────
+  if (total_residuals < cfg_.min_residuals)
   {
-    std::cerr << "[EdgeCalibrator] No residuals — check depth_edge_thresh or cloud validity.\n";
+    std::cerr << "[EdgeCalibrator] REJECTED: only " << total_residuals
+              << " residuals (need " << cfg_.min_residuals
+              << "). Calibration is underconstrained — skipping this batch.\n"
+              << "  → Check that the LiDAR has enough points in the camera FOV\n"
+              << "  → Consider lowering depth_edge_thresh or lidar_sample_step\n";
     return false;
   }
 
@@ -234,13 +253,15 @@ bool EdgeCalibrator::solve(
     std::cout << summary.FullReport() << "\n";
 
   if (summary.termination_type == ceres::FAILURE)
+  {
+    std::cerr << "[EdgeCalibrator] Ceres returned FAILURE.\n";
     return false;
+  }
 
   // ── Convert back ─────────────────────────────────────────────────────────
   cv::Mat rvec_out = (cv::Mat_<double>(3, 1)
                        << angle_axis[0], angle_axis[1], angle_axis[2]);
   cv::Rodrigues(rvec_out, R_out);
-
   t_out = (cv::Mat_<double>(3, 1)
             << translation[0], translation[1], translation[2]);
 
@@ -249,6 +270,13 @@ bool EdgeCalibrator::solve(
     std::cout << "\n[EdgeCalibrator] === Refined extrinsics ===\n";
     std::cout << "R:\n" << R_out << "\n";
     std::cout << "t:\n" << t_out << "\n";
+  }
+
+  // ── Sanity check ──────────────────────────────────────────────────────────
+  if (!isSane(R_init, t_init, R_out, t_out))
+  {
+    std::cerr << "[EdgeCalibrator] Result failed sanity check — discarding.\n";
+    return false;
   }
 
   return true;

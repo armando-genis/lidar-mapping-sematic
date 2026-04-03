@@ -8,3 +8,7 @@ multicamera_lidar_calibration_node:
     lidar_rotation_z: 0.0
     calibration_mode: true # set to true to run edge-alignment calibration
     display_scale: 0.5 # 1920x1080 * 0.5 = 960x540 per panel
+    save_debug_frames: true # save image + edge + pcd + xyzi.bin for each calib frame
+    debug_output_dir: /workspace/lidar-modules # where to save debug frames
+    sync_max_dt: 0.5 # max lidar-camera time difference (seconds)
+    sync_wait_frames: 5 # skip first N image frames to let lidar buffer fill

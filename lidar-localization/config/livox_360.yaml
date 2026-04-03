@@ -49,7 +49,7 @@
 
     lio.eva.timer: true
 
-    lio.local_map.enable: true # true = odometry-only sliding-window mode, false = mapping mode
+    lio.local_map.enable: true # true = odometry-only sliding-window mode
     lio.local_map.radius: 50.0 # m  — keep keyframes within this radius
     lio.local_map.prune_interval: 10 # prune every N new keyframes
 

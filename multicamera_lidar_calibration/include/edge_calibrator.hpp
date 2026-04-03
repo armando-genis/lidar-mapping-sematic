@@ -20,13 +20,12 @@ struct CalibFrame
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helper: extract the scalar (double) value from either a plain double
-//         or a ceres::Jet<double, N>.  Works at compile time via SFINAE.
+// Jet scalar extractor — works for both double and ceres::Jet<double,N>
 // ─────────────────────────────────────────────────────────────────────────────
 template <typename T>
-inline double jetToDouble(const T& x) { return x.a; }          // Jet case
+inline double jetToDouble(const T& x) { return x.a; }
 template <>
-inline double jetToDouble<double>(const double& x) { return x; } // plain double
+inline double jetToDouble<double>(const double& x) { return x; }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Ceres cost functor
@@ -46,13 +45,10 @@ struct EdgeAlignCost
     h_  = dist_map.rows;
   }
 
-  // ── Bilinear interpolation on the distance map ──────────────────────────────
-  // All index arithmetic is done in plain int (computed from the scalar part),
-  // so this works for both T=double and T=Jet<double,N>.
+  // Bilinear interpolation — index arithmetic uses scalar part only
   template <typename T>
   T interpolate(T u, T v) const
   {
-    // Scalar floor — safe for both double and Jet
     int x0 = static_cast<int>(std::floor(jetToDouble(u)));
     int y0 = static_cast<int>(std::floor(jetToDouble(v)));
     int x1 = x0 + 1;
@@ -77,13 +73,11 @@ struct EdgeAlignCost
          + dx            * dy          * f11;
   }
 
-  // ── Main operator ───────────────────────────────────────────────────────────
   template <typename T>
-  bool operator()(const T* const angle_axis,   // [3] axis-angle
-                  const T* const translation,  // [3] tx, ty, tz
+  bool operator()(const T* const angle_axis,
+                  const T* const translation,
                   T* residual) const
   {
-    // Transform point from lidar frame to camera frame
     T p_lidar[3] = { T(pt_.x), T(pt_.y), T(pt_.z) };
     T p_cam[3];
     ceres::AngleAxisRotatePoint(angle_axis, p_lidar, p_cam);
@@ -91,18 +85,15 @@ struct EdgeAlignCost
     p_cam[1] += translation[1];
     p_cam[2] += translation[2];
 
-    // Reject points behind the camera (scalar comparison)
     if (jetToDouble(p_cam[2]) < 0.1)
     {
       residual[0] = T(0);
       return true;
     }
 
-    // Project to pixel
     T u = T(fx_) * p_cam[0] / p_cam[2] + T(cx_);
     T v = T(fy_) * p_cam[1] / p_cam[2] + T(cy_);
 
-    // Bounds check using scalar part only
     double u_s = jetToDouble(u);
     double v_s = jetToDouble(v);
 
@@ -113,7 +104,6 @@ struct EdgeAlignCost
       return true;
     }
 
-    // Cost = distance to nearest camera edge (0 = on edge, 1 = far from edge)
     residual[0] = interpolate(u, v);
     return true;
   }
@@ -127,10 +117,10 @@ struct EdgeAlignCost
   }
 
 private:
-  cv::Mat         dist_map_;
-  pcl::PointXYZI  pt_;
-  double          fx_, fy_, cx_, cy_;
-  int             w_, h_;
+  cv::Mat        dist_map_;
+  pcl::PointXYZI pt_;
+  double         fx_, fy_, cx_, cy_;
+  int            w_, h_;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,24 +129,25 @@ private:
 class EdgeCalibrator
 {
 public:
-  // ── Configuration ───────────────────────────────────────────────────────────
   struct Config
   {
-    int    canny_low         = 50;
-    int    canny_high        = 150;
-    int    min_frames        = 10;   // frames to collect before solving
-    int    max_frames        = 50;
-    double dist_map_scale    = 1.0;  // scale factor on distance map values
-    double depth_edge_thresh = 0.5;  // depth discontinuity threshold (m)
-    int    lidar_sample_step = 3;    // use every Nth lidar edge point
+    int    canny_low          = 50;
+    int    canny_high         = 150;
+    int    min_frames         = 30;    // more frames = more residuals = robust
+    int    max_frames         = 60;
+    double dist_map_scale     = 1.0;
+    double depth_edge_thresh  = 0.5;   // depth discontinuity threshold (m)
+    int    lidar_sample_step  = 3;
+
+    // ── Sanity checks on the solve result ──────────────────────────────────
+    int    min_residuals      = 2000;  // reject solve if fewer residuals than this
+    double max_translation_m  = 0.5;   // reject if t moves more than this (metres)
+    double max_rotation_deg   = 10.0;  // reject if R changes more than this (degrees)
   };
 
-  // Constructor — default Config declared AFTER the struct is complete
   EdgeCalibrator();
   explicit EdgeCalibrator(const Config& cfg);
 
-  // ── Data ingestion ──────────────────────────────────────────────────────────
-  // Call each time you have a synced (undistorted_image, cloud) pair
   bool addFrame(const cv::Mat& undistorted_image,
                 const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud,
                 const cv::Mat& K,
@@ -166,14 +157,12 @@ public:
   bool hasEnoughFrames() const { return static_cast<int>(frames_.size()) >= cfg_.min_frames; }
   int  frameCount()      const { return static_cast<int>(frames_.size()); }
 
-  // ── Run optimisation ────────────────────────────────────────────────────────
   bool solve(const cv::Mat& R_init,
              const cv::Mat& t_init,
              cv::Mat& R_out,
              cv::Mat& t_out,
              bool verbose = true);
 
-  // ── Static helpers ───────────────────────────────────────────────────────────
   static cv::Mat extractImageEdges(const cv::Mat& undistorted,
                                    int low = 50, int high = 150);
 
@@ -187,6 +176,10 @@ public:
   void reset() { frames_.clear(); }
 
 private:
+  // Check that the refined result is physically plausible
+  bool isSane(const cv::Mat& R_init, const cv::Mat& t_init,
+              const cv::Mat& R_out,  const cv::Mat& t_out) const;
+
   Config                  cfg_;
   std::vector<CalibFrame> frames_;
   cv::Mat                 K_stored_;

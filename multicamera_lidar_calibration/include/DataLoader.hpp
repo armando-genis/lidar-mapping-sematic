@@ -72,7 +72,7 @@ public:
 
     // ── Save refined extrinsics back to the original YAML files ──────────────
     // Only the R and t values are updated; all other YAML structure is preserved.
-    void save(const std::string& calib_dir)
+    void save([[maybe_unused]] const std::string& calib_dir)
     {
         for (auto& [cam_idx, path] : extrinsic_paths_)
         {

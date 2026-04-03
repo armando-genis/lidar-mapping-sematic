@@ -1,7 +1,11 @@
 #include "multicamera_subscriber.hpp"
 
+#include <fstream>
 #include <iomanip>
+#include <sstream>
 #include <pcl/common/transforms.h>
+
+namespace fs = std::filesystem;
 
 namespace multicamera_lidar_calibration
 {
@@ -56,7 +60,27 @@ void printMatScientific(std::ostream& out, const cv::Mat& M)
   out << std::fixed;
 }
 
-// ── Bottom panel: white bg + black Canny edges + coloured LiDAR dots ─────────
+// KITTI-style: each point is 4 × float32 — x, y, z, intensity (row-major, no header)
+void savePointCloudXyziBin(
+    const std::string& path, const pcl::PointCloud<pcl::PointXYZI>& cloud)
+{
+  std::ofstream out(path, std::ios::binary);
+  if (!out) return;
+  const size_t n = cloud.size();
+  std::vector<float> buf(n * 4);
+  for (size_t i = 0; i < n; ++i)
+  {
+    const auto& p = cloud.points[i];
+    buf[i * 4 + 0] = p.x;
+    buf[i * 4 + 1] = p.y;
+    buf[i * 4 + 2] = p.z;
+    buf[i * 4 + 3] = p.intensity;
+  }
+  out.write(reinterpret_cast<const char*>(buf.data()),
+            static_cast<std::streamsize>(buf.size() * sizeof(float)));
+}
+
+// ── Bottom debug panel: white bg + black edges + coloured LiDAR ──────────────
 cv::Mat buildEdgeDebugFrame(
     const cv::Mat& undistorted,
     const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud,
@@ -72,7 +96,7 @@ cv::Mat buildEdgeDebugFrame(
   cv::GaussianBlur(gray, blurred, {5, 5}, 1.5);
   cv::Canny(blurred, edges_raw, 50, 150);
 
-  // White background, black edges
+  // White background + black edges
   cv::Mat debug(undistorted.rows, undistorted.cols, CV_8UC3, cv::Scalar(255, 255, 255));
   for (int r = 0; r < edges_raw.rows; ++r)
     for (int c = 0; c < edges_raw.cols; ++c)
@@ -86,8 +110,7 @@ cv::Mat buildEdgeDebugFrame(
   const double fy = K.at<double>(1, 1);
   const double cx = K.at<double>(0, 2);
   const double cy = K.at<double>(1, 2);
-  const int w = debug.cols;
-  const int h = debug.rows;
+  const int w = debug.cols, h = debug.rows;
 
   for (const auto& p : cloud->points)
   {
@@ -109,14 +132,32 @@ cv::Mat buildEdgeDebugFrame(
   return debug;
 }
 
-// ── Scale a mat down if display_scale < 1.0 ──────────────────────────────────
+// Returns the raw edge image (CV_8U) — used both for display and saving
+cv::Mat extractEdgeImage(const cv::Mat& undistorted)
+{
+  cv::Mat gray, blurred, edges;
+  if (undistorted.channels() == 3)
+    cv::cvtColor(undistorted, gray, cv::COLOR_BGR2GRAY);
+  else
+    gray = undistorted.clone();
+  cv::GaussianBlur(gray, blurred, {5, 5}, 1.5);
+  cv::Canny(blurred, edges, 50, 150);
+  return edges;  // CV_8U, full resolution
+}
+
 cv::Mat scaleForDisplay(const cv::Mat& src, double scale)
 {
-  if (std::abs(scale - 1.0) < 1e-3 || scale <= 0.0)
-    return src;
+  if (std::abs(scale - 1.0) < 1e-3 || scale <= 0.0) return src;
   cv::Mat out;
   cv::resize(src, out, {}, scale, scale, cv::INTER_AREA);
   return out;
+}
+
+std::string zeroPad(int n, int width = 6)
+{
+  std::ostringstream ss;
+  ss << std::setw(width) << std::setfill('0') << n;
+  return ss.str();
 }
 
 }  // anonymous namespace
@@ -127,23 +168,31 @@ cv::Mat scaleForDisplay(const cv::Mat& src, double scale)
 MultiCameraSubscriber::MultiCameraSubscriber()
 : Node("multicamera_lidar_calibration_node")
 {
-  this->declare_parameter<int>("num_cameras", 3);
+  this->declare_parameter<int>("num_cameras", 1);
   this->declare_parameter<std::string>("calib_dir", "");
   this->declare_parameter<std::string>("lidar_topic", "");
   this->declare_parameter<double>("lidar_rotation_x", 0.0);
   this->declare_parameter<double>("lidar_rotation_y", 0.0);
   this->declare_parameter<double>("lidar_rotation_z", 0.0);
   this->declare_parameter<bool>("calibration_mode", false);
-  this->declare_parameter<double>("display_scale", 0.4);   // ← NEW
+  this->declare_parameter<double>("display_scale", 0.5);
+  this->declare_parameter<bool>("save_debug_frames", false);
+  this->declare_parameter<std::string>("debug_output_dir", "/tmp/calib_debug");
+  this->declare_parameter<double>("sync_max_dt", 0.5);
+  this->declare_parameter<int>("sync_wait_frames", 5);
 
-  num_cameras_      = this->get_parameter("num_cameras").as_int();
-  calib_dir_        = this->get_parameter("calib_dir").as_string();
-  lidar_topic_      = this->get_parameter("lidar_topic").as_string();
-  calibration_mode_ = this->get_parameter("calibration_mode").as_bool();
-  display_scale_    = this->get_parameter("display_scale").as_double();  // ← NEW
-  lidar_rotation_x_ = static_cast<float>(this->get_parameter("lidar_rotation_x").as_double());
-  lidar_rotation_y_ = static_cast<float>(this->get_parameter("lidar_rotation_y").as_double());
-  lidar_rotation_z_ = static_cast<float>(this->get_parameter("lidar_rotation_z").as_double());
+  num_cameras_       = this->get_parameter("num_cameras").as_int();
+  calib_dir_         = this->get_parameter("calib_dir").as_string();
+  lidar_topic_       = this->get_parameter("lidar_topic").as_string();
+  calibration_mode_  = this->get_parameter("calibration_mode").as_bool();
+  display_scale_     = this->get_parameter("display_scale").as_double();
+  save_debug_frames_ = this->get_parameter("save_debug_frames").as_bool();
+  debug_output_dir_  = this->get_parameter("debug_output_dir").as_string();
+  sync_max_dt_       = this->get_parameter("sync_max_dt").as_double();
+  sync_wait_frames_  = this->get_parameter("sync_wait_frames").as_int();
+  lidar_rotation_x_  = static_cast<float>(this->get_parameter("lidar_rotation_x").as_double());
+  lidar_rotation_y_  = static_cast<float>(this->get_parameter("lidar_rotation_y").as_double());
+  lidar_rotation_z_  = static_cast<float>(this->get_parameter("lidar_rotation_z").as_double());
 
   Eigen::Matrix3f R =
     (Eigen::AngleAxisf(lidar_rotation_z_, Eigen::Vector3f::UnitZ()) *
@@ -155,14 +204,29 @@ MultiCameraSubscriber::MultiCameraSubscriber()
 
   std::cout << "\n================================================\n";
   std::cout << "  multicamera_lidar_calibration starting\n";
-  std::cout << "  lidar_topic:      " << lidar_topic_      << "\n";
-  std::cout << "  calib_dir:        " << calib_dir_        << "\n";
-  std::cout << "  calibration_mode: " << (calibration_mode_ ? "ON" : "OFF") << "\n";
-  std::cout << "  display_scale:    " << display_scale_    << "\n";
-  std::cout << "  lidar_rotation:   x=" << lidar_rotation_x_
+  std::cout << "  lidar_topic:       " << lidar_topic_       << "\n";
+  std::cout << "  calib_dir:         " << calib_dir_         << "\n";
+  std::cout << "  calibration_mode:  " << (calibration_mode_ ? "ON" : "OFF") << "\n";
+  std::cout << "  display_scale:     " << display_scale_     << "\n";
+  std::cout << "  save_debug_frames: " << (save_debug_frames_ ? "YES → " + debug_output_dir_ : "NO") << "\n";
+  std::cout << "  sync_max_dt:       " << sync_max_dt_       << " s\n";
+  std::cout << "  sync_wait_frames:  " << sync_wait_frames_  << " frames skipped at startup\n";
+  std::cout << "  lidar_rotation:    x=" << lidar_rotation_x_
             << " y=" << lidar_rotation_y_
             << " z=" << lidar_rotation_z_ << "\n";
   std::cout << "================================================\n\n";
+
+  // ── Create debug output directories ──────────────────────────────────────
+  if (save_debug_frames_)
+  {
+    for (int i = 0; i < num_cameras_; ++i)
+    {
+      fs::create_directories(debug_output_dir_ + "/cam" + std::to_string(i) + "/images");
+      fs::create_directories(debug_output_dir_ + "/cam" + std::to_string(i) + "/edges");
+      fs::create_directories(debug_output_dir_ + "/cam" + std::to_string(i) + "/clouds");
+    }
+    std::cout << "[DEBUG] Saving frames to: " << debug_output_dir_ << "\n";
+  }
 
   calib.load(calib_dir_);
 
@@ -179,17 +243,39 @@ MultiCameraSubscriber::MultiCameraSubscriber()
     std::cout << "Extrinsics cam0:\n";
     printMatLikePython(std::cout, ext->get_R_opencv(), "R");
     printMatLikePython(std::cout, ext->get_t_opencv(), "t");
+
+    // ── Warn if t looks like a bad previous calibration result ───────────────
+    cv::Mat t0 = ext->get_t_opencv();
+    double t_norm = cv::norm(t0);
+    if (t_norm > 2.0)
+    {
+      std::cerr << "\n⚠️  WARNING: t_norm = " << t_norm
+                << " m — this looks like a bad previous calibration!\n"
+                << "   Restore your original LidartoCam0.yaml before running "
+                   "calibration_mode:=true\n\n";
+    }
   }
 
+  // ── Edge calibrator config ────────────────────────────────────────────────
   EdgeCalibrator::Config cal_cfg;
-  cal_cfg.min_frames        = 10;
-  cal_cfg.max_frames        = 50;
+  cal_cfg.min_frames        = 30;
+  cal_cfg.max_frames        = 60;
   cal_cfg.canny_low         = 50;
   cal_cfg.canny_high        = 150;
   cal_cfg.depth_edge_thresh = 0.5;
   cal_cfg.lidar_sample_step = 3;
+  cal_cfg.min_residuals     = 2000;
+  cal_cfg.max_translation_m = 0.5;
+  cal_cfg.max_rotation_deg  = 10.0;
+
+  // Initialise per-camera state
   for (int i = 0; i < num_cameras_; ++i)
     calibrators_.emplace_back(cal_cfg);
+
+  frame_counters_.clear();
+  frame_counters_.reserve(num_cameras_);
+  for (int i = 0; i < num_cameras_; ++i)
+    frame_counters_.push_back(std::make_unique<std::atomic<int>>(0));
 
   auto lidar_qos  = rclcpp::QoS(rclcpp::KeepLast(10)).reliable().durability_volatile();
   auto camera_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort().durability_volatile();
@@ -210,6 +296,41 @@ MultiCameraSubscriber::MultiCameraSubscriber()
     subscribers_.push_back(sub);
     RCLCPP_INFO(this->get_logger(), "Subscribed to %s", topic.c_str());
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// saveDebugFrame  — full resolution image + edge + pcd
+// ─────────────────────────────────────────────────────────────────────────────
+void MultiCameraSubscriber::saveDebugFrame(
+    int camera_id,
+    int frame_idx,
+    const cv::Mat& undistorted,
+    const cv::Mat& edge_image,
+    const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud)
+{
+  std::string base = debug_output_dir_ + "/cam" + std::to_string(camera_id);
+  std::string idx  = zeroPad(frame_idx);
+
+  // Full-res undistorted image
+  std::string img_path = base + "/images/" + idx + ".png";
+  cv::imwrite(img_path, undistorted);
+
+  // Full-res edge image (convert binary to colour for clarity)
+  cv::Mat edge_bgr;
+  cv::cvtColor(edge_image, edge_bgr, cv::COLOR_GRAY2BGR);
+  // Invert: white bg, black edges
+  cv::bitwise_not(edge_bgr, edge_bgr);
+  std::string edge_path = base + "/edges/" + idx + "_edges.png";
+  cv::imwrite(edge_path, edge_bgr);
+
+  // Binary PCD + raw float32 XYZI .bin (KITTI-style: N×4 floats, no header)
+  std::string pcd_path = base + "/clouds/" + idx + ".pcd";
+  std::string bin_path = base + "/clouds/" + idx + ".bin";
+  pcl::io::savePCDFileBinary(pcd_path, *cloud);
+  savePointCloudXyziBin(bin_path, *cloud);
+
+  std::cout << "[DEBUG] Saved frame " << frame_idx << " → " << img_path
+            << " + " << bin_path << "\n";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -250,6 +371,16 @@ void MultiCameraSubscriber::imageCallback(
     }
     if (frame.empty()) return;
 
+    // ── Warm-up skip: let the lidar buffer fill before trying to sync ─────────
+    int fc = frame_counters_[static_cast<size_t>(camera_id)]->fetch_add(1);
+    if (fc < sync_wait_frames_)
+    {
+      RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+          "[CAM %d] Warm-up frame %d/%d — waiting for lidar buffer...",
+          camera_id, fc + 1, sync_wait_frames_);
+      return;
+    }
+
     // ── 1) Undistort ──────────────────────────────────────────────────────────
     if (static_cast<size_t>(camera_id) < calib.camera_array.size() &&
         calib.camera_array[camera_id])
@@ -259,11 +390,12 @@ void MultiCameraSubscriber::imageCallback(
       frame = cam->undistort(frame);
     }
 
-    // ── 2) Match LiDAR cloud ──────────────────────────────────────────────────
+    // ── 2) Timestamp-match LiDAR cloud ───────────────────────────────────────
     const double image_stamp = static_cast<double>(msg->header.stamp.sec) +
                                static_cast<double>(msg->header.stamp.nanosec) * 1e-9;
 
     pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_copy;
+    double matched_dt = std::numeric_limits<double>::max();
     {
       std::lock_guard<std::mutex> lock(lidar_mutex_);
       double best_dt = std::numeric_limits<double>::max();
@@ -273,13 +405,23 @@ void MultiCameraSubscriber::imageCallback(
         double dt = std::abs(lf.stamp - image_stamp);
         if (dt < best_dt) { best_dt = dt; best = &lf; }
       }
-      if (best_dt < 0.5 && best != nullptr)
-        cloud_copy = best->cloud;
+
+      if (best != nullptr && best_dt < sync_max_dt_)
+      {
+        cloud_copy  = best->cloud;
+        matched_dt  = best_dt;
+      }
       else
+      {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "[CAM %d] No lidar match (dt=%.3fs, buf=%zu)",
-            camera_id, best_dt, lidar_buffer_.size());
+            "[CAM %d] No lidar match (best_dt=%.3fs, buf=%zu, sync_max_dt=%.2fs)",
+            camera_id, best_dt, lidar_buffer_.size(), sync_max_dt_);
+      }
     }
+
+    if (cloud_copy)
+      RCLCPP_DEBUG(this->get_logger(), "[CAM %d] Matched cloud dt=%.3fs, pts=%zu",
+                   camera_id, matched_dt, cloud_copy->size());
 
     // ── 3) Get R, t, K ────────────────────────────────────────────────────────
     cv::Mat R, t, K;
@@ -293,11 +435,12 @@ void MultiCameraSubscriber::imageCallback(
         calib.camera_array[camera_id])
       K = calib.camera_array[camera_id]->get_K();
 
-    // ── 4) Calibration ────────────────────────────────────────────────────────
+    // ── 4) Calibration mode ───────────────────────────────────────────────────
     if (calibration_mode_ && cloud_copy && !cloud_copy->empty() &&
         !R.empty() && !t.empty() && !K.empty())
     {
       tryCalibrate(camera_id, frame, cloud_copy);
+      // Refresh after possible update
       if (calib.extrinsics_array[camera_id])
       {
         R = calib.extrinsics_array[camera_id]->get_R_opencv();
@@ -305,29 +448,36 @@ void MultiCameraSubscriber::imageCallback(
       }
     }
 
-    // ── 5) TOP panel: colour image + LiDAR projection ─────────────────────────
+    // ── 5) TOP: colour image + LiDAR projection ───────────────────────────────
     cv::Mat top = frame.clone();
-    if (top.channels() == 1)
-      cv::cvtColor(top, top, cv::COLOR_GRAY2BGR);
+    if (top.channels() == 1) cv::cvtColor(top, top, cv::COLOR_GRAY2BGR);
     if (cloud_copy && !cloud_copy->empty() && !R.empty())
       top = projectLidarOnImage(top, cloud_copy, R, t, K);
 
-    // Label — scale font size with display_scale so it stays readable
     {
-      double fs = std::max(0.5, 0.9 / display_scale_);  // bigger font on smaller image
-      std::string label = "CAM " + std::to_string(camera_id) + " | projected";
-      cv::putText(top, label, {10, 35}, cv::FONT_HERSHEY_SIMPLEX, fs, {0, 255, 0}, 2);
+      double fs = std::max(0.5, 0.9 / display_scale_);
+      std::string lbl = "CAM " + std::to_string(camera_id) + " | projected";
+      cv::putText(top, lbl, {10, 35}, cv::FONT_HERSHEY_SIMPLEX, fs, {0, 255, 0}, 2);
+
+      // Show sync quality
+      if (cloud_copy)
+      {
+        std::ostringstream ss;
+        ss << "sync dt=" << std::fixed << std::setprecision(3) << matched_dt << "s";
+        cv::Scalar col = (matched_dt < 0.1) ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 165, 255);
+        cv::putText(top, ss.str(), {10, 70}, cv::FONT_HERSHEY_SIMPLEX,
+                    fs * 0.7, col, 1);
+      }
     }
 
-    // ── 6) BOTTOM panel: edges + LiDAR dots ──────────────────────────────────
+    // ── 6) BOTTOM: edges + LiDAR dots ────────────────────────────────────────
     cv::Mat bottom = buildEdgeDebugFrame(frame, cloud_copy, R, t, K);
-
     {
       double fs = std::max(0.5, 0.9 / display_scale_);
       if (calibration_mode_ && static_cast<size_t>(camera_id) < calibrators_.size())
       {
         int n    = calibrators_[camera_id].frameCount();
-        int need = 10;
+        int need = 30;
         std::string status = "CALIB " + std::to_string(n) + "/" + std::to_string(need);
         cv::Scalar col = (n >= need) ? cv::Scalar(0, 200, 0) : cv::Scalar(0, 140, 255);
         cv::putText(bottom, status, {10, 35}, cv::FONT_HERSHEY_SIMPLEX, fs, col, 2);
@@ -339,26 +489,20 @@ void MultiCameraSubscriber::imageCallback(
       }
     }
 
-    // ── 7) Make both panels same type, add separator, stack, scale, show ──────
+    // ── 7) Stack, scale, show ─────────────────────────────────────────────────
     if (top.type()    != CV_8UC3) cv::cvtColor(top,    top,    cv::COLOR_GRAY2BGR);
     if (bottom.type() != CV_8UC3) cv::cvtColor(bottom, bottom, cv::COLOR_GRAY2BGR);
     if (top.size()    != bottom.size()) cv::resize(bottom, bottom, top.size());
 
-    // Yellow separator line at the bottom of the top panel
-    cv::line(top,
-             {0,            top.rows - 2},
-             {top.cols - 1, top.rows - 2},
-             {0, 220, 220}, 3);
+    cv::line(top, {0, top.rows - 2}, {top.cols - 1, top.rows - 2}, {0, 220, 220}, 3);
 
     cv::Mat stacked;
     cv::vconcat(top, bottom, stacked);
 
-    // ── Scale for display ─────────────────────────────────────────────────────
-    // At 0.4 scale: 1920x1080 per panel → 768x432 per panel → 768x864 total
     cv::Mat display = scaleForDisplay(stacked, display_scale_);
 
     std::string win = "Camera " + std::to_string(camera_id);
-    cv::namedWindow(win, cv::WINDOW_AUTOSIZE);  // AUTOSIZE respects our resize
+    cv::namedWindow(win, cv::WINDOW_AUTOSIZE);
     cv::imshow(win, display);
     cv::waitKey(1);
   }
@@ -387,9 +531,19 @@ void MultiCameraSubscriber::tryCalibrate(
   cv::Mat t = ext->get_t_opencv();
 
   bool added = cal.addFrame(undistorted_frame, cloud, K, R, t);
+
   if (added)
-    std::cout << "[CAM " << camera_id << "] Calib frame "
-              << cal.frameCount() << "/10\n";
+  {
+    int n = cal.frameCount();
+    std::cout << "[CAM " << camera_id << "] Calib frame " << n << "/30\n";
+
+    // ── Save full-res debug frame if requested ────────────────────────────────
+    if (save_debug_frames_)
+    {
+      cv::Mat edges = extractEdgeImage(undistorted_frame);
+      saveDebugFrame(camera_id, n, undistorted_frame, edges, cloud);
+    }
+  }
 
   if (!cal.hasEnoughFrames()) return;
 
@@ -401,13 +555,14 @@ void MultiCameraSubscriber::tryCalibrate(
     ext->set_R_opencv(R_refined);
     ext->set_t_opencv(t_refined);
     calib.save(calib_dir_);
-    std::cout << "[CAM " << camera_id << "] Saved to " << calib_dir_ << "\n";
+    std::cout << "[CAM " << camera_id << "] ✓ Saved to " << calib_dir_ << "\n";
     RCLCPP_INFO(this->get_logger(), "[CAM %d] Calibration refined and saved!", camera_id);
   }
   else
   {
-    std::cout << "[CAM " << camera_id << "] Solve FAILED\n";
-    RCLCPP_WARN(this->get_logger(), "[CAM %d] Calibration solve failed.", camera_id);
+    std::cout << "[CAM " << camera_id
+              << "] ✗ Solve rejected — keeping previous extrinsics\n";
+    RCLCPP_WARN(this->get_logger(), "[CAM %d] Calibration solve rejected.", camera_id);
   }
 
   cal.reset();
@@ -436,7 +591,7 @@ void MultiCameraSubscriber::lidarCallback(
 
   std::lock_guard<std::mutex> lock(lidar_mutex_);
   lidar_buffer_.push_back(std::move(lf));
-  while (lidar_buffer_.size() > 15)
+  while (lidar_buffer_.size() > 30)  // bigger buffer = better sync window
     lidar_buffer_.pop_front();
 }
 
@@ -458,22 +613,17 @@ cv::Mat MultiCameraSubscriber::projectLidarOnImage(
   const double fy = K.at<double>(1, 1);
   const double cx = K.at<double>(0, 2);
   const double cy = K.at<double>(1, 2);
-  const int h = out.rows;
-  const int w = out.cols;
+  const int h = out.rows, w = out.cols;
 
   for (const auto& p : cloud->points)
   {
     cv::Mat pt  = (cv::Mat_<double>(3, 1) << p.x, p.y, p.z);
     cv::Mat cam = R * pt + t;
-    double x = cam.at<double>(0);
-    double y = cam.at<double>(1);
-    double z = cam.at<double>(2);
+    double x = cam.at<double>(0), y = cam.at<double>(1), z = cam.at<double>(2);
     if (z <= 0.1) continue;
-
     int u = static_cast<int>(fx * x / z + cx + 0.5);
     int v = static_cast<int>(fy * y / z + cy + 0.5);
     if (u < 0 || u >= w || v < 0 || v >= h) continue;
-
     float depth = std::min(static_cast<float>(z) / 20.0f, 1.0f);
     cv::Scalar color(255,
                      static_cast<int>(255 * (1.0 - depth)),
