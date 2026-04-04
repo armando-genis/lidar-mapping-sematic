@@ -129,6 +129,7 @@ bool SuperLIOReLoc::map_init(){
   LOG(INFO) << GREEN << " ---> Map size: " << point_map_->size() << RESET;
   ivox_->printInfo();
 
+  full_map_ = point_map_;  // keep persistent reference for local submap pruning
   pcd_loaded = true;
 
   data_wrapper_->set_global_map(point_map_);
@@ -265,7 +266,8 @@ bool SuperLIOReLoc::kf_init(){
   sys_init_pose_ = kf_->GetSE3();
 
   {
-    point_map_->clear();
+    // Don't clear point_map_ in-place — full_map_ shares the same cloud data.
+    // Just redirect point_map_ to an empty cloud; full_map_ keeps the loaded map.
     point_map_.reset(new PointCloudType());
     init_obs_data_->clear();
     init_obs_data_ = nullptr;
@@ -276,32 +278,57 @@ bool SuperLIOReLoc::kf_init(){
 }
 
 
-void SuperLIOReLoc::UpdateMap() {
-  if(g_update_map){
-    static int __update_delay = 100;
-    if(__update_delay > 0){
-      __update_delay--;
-      std::cout << "Update map Delay: " << 100 - __update_delay << " %" << std::endl;
-      return;
+void SuperLIOReLoc::pruneLocalMap() {
+  if (!full_map_ || full_map_->empty()) return;
+
+  const V3    cur_pos   = kf_->GetSE3().t_;
+  const float radius_sq = static_cast<float>(g_local_map_radius * g_local_map_radius);
+
+  ivox_.reset(new OctVoxMapType(OctVoxMapType::Options{g_ivox_resolution, g_ivox_capacity}));
+
+  VV3 local_pts;
+  local_pts.reserve(full_map_->size() / 4);
+
+  for (const auto& pt : full_map_->points) {
+    const V3 p(pt.x, pt.y, pt.z);
+    if ((p - cur_pos).squaredNorm() <= radius_sq) {
+      local_pts.push_back(p);
     }
   }
 
-  const size_t ptsize = ds_undistort_->size();
-  if (ptsize == 0) return;
-  
-  last_pose_ = kf_->GetSE3();
-  points_world_v3_.resize(ptsize);
-  
-  const auto R = last_pose_.R_;
-  const auto t = last_pose_.t_;
-  
-  for (size_t i = 0; i < ptsize; ++i) {
-    const auto& pt = points_body_v3_[i];
-    points_world_v3_[i] = R * pt + t;
-  }
-  
-  ivox_->insert(points_world_v3_);
+  ivox_->insert(local_pts);
 
+  LOG(INFO) << GREEN << " ---> [ReLoc]: iVox rebuilt — "
+            << local_pts.size() << " pts within " << g_local_map_radius << " m." << RESET;
+}
+
+
+void SuperLIOReLoc::UpdateMap() {
+  last_pose_ = kf_->GetSE3();
+
+  if (g_update_map) {
+    static int __update_delay = 100;
+    if (__update_delay > 0) {
+      __update_delay--;
+      return;
+    }
+    const size_t ptsize = ds_undistort_->size();
+    if (ptsize > 0) {
+      points_world_v3_.resize(ptsize);
+      const auto R = last_pose_.R_;
+      const auto t = last_pose_.t_;
+      for (size_t i = 0; i < ptsize; ++i) {
+        points_world_v3_[i] = R * points_body_v3_[i] + t;
+      }
+      ivox_->insert(points_world_v3_);
+    }
+  }
+
+  if (first_update_ || ++prune_counter_ >= g_local_map_prune_interval) {
+    first_update_ = false;
+    pruneLocalMap();
+    prune_counter_ = 0;
+  }
 }
 
 

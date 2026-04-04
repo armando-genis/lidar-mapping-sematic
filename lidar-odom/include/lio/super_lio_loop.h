@@ -28,6 +28,8 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 
 #include "super_lio.h"
+#include "lio/STDesc.h"
+
 
 namespace LI2Sup {
 
@@ -95,6 +97,14 @@ private:
   BASIC::SE3   fromGtsamPose(const gtsam::Pose3& pose) const;
   void         publishLoopConstraints();
   void         publishCorrectedPath();
+
+  // ── STDescManager ────────────────────────────────────────────────────────
+  void saveSTDDatabase();
+
+  STDescManager                    std_manager_;
+  std::vector<std::vector<STDesc>> kf_stds_;     // per-keyframe descriptors
+  ConfigSetting                    std_cfg_;      // STD parameters
+
 
 private:
   // ── Keyframe store (guarded by mtx_kf_) ─────────────────────────────────

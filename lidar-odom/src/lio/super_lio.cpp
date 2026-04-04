@@ -1,5 +1,6 @@
 
 #include "lio/super_lio.h"
+#include "lio/super_lio_loop.h"
 
 #include <chrono>
 #include <iomanip>
@@ -366,6 +367,10 @@ void SuperLIO::saveMap(){
     pcl::io::savePCDFileBinary(map_name, latst_map);
     LOG(INFO) << GREEN << " ---> Save map success. File: " << map_name << RESET;
     LOG(INFO) << GREEN << " ---> Map size: " << latst_map.size() << RESET;
+  }
+
+  if (auto *loop = dynamic_cast<SuperLIOLoop*>(this)) {
+    loop->saveSTDDatabase();
   }
 }
 

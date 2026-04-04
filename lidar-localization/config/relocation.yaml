@@ -51,7 +51,10 @@
     lio.output.dense: true
     lio.output.pub_step: 1
 
-    lio.relocation.update_map: true
+    lio.relocation.update_map: false
     lio.relocation.init_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    lio.local_map.radius: 50.0 # m — keep map points within this radius of current pose
+    lio.local_map.prune_interval: 10 # rebuild iVox every N frames
 
     lio.eva.timer: true

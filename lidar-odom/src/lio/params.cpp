@@ -94,4 +94,27 @@ namespace LI2Sup{
   double g_loop_fitness_score     = 0.3;
   double g_loop_icp_leaf_size     = 0.4;
 
+  /// STD descriptor parameters
+  double g_std_ds_size                    = 0.5;
+  int    g_std_maximum_corner_num         = 100;
+  double g_std_plane_merge_normal_thre    = 0.1;
+  double g_std_plane_detection_thre       = 0.01;
+  double g_std_voxel_size                 = 1.0;
+  int    g_std_voxel_init_num             = 10;
+  double g_std_proj_image_resolution      = 0.5;
+  double g_std_proj_dis_min               = 0.2;
+  double g_std_proj_dis_max               = 5.0;
+  double g_std_corner_thre                = 10.0;
+  int    g_std_descriptor_near_num        = 10;
+  double g_std_descriptor_min_len         = 1.0;
+  double g_std_descriptor_max_len         = 10.0;
+  double g_std_non_max_suppression_radius = 3.0;
+  double g_std_std_side_resolution        = 0.2;
+  int    g_std_candidate_num              = 50;
+  double g_std_rough_dis_threshold        = 0.03;
+  double g_std_vertex_diff_threshold      = 0.7;
+  double g_std_icp_threshold              = 0.5;
+  double g_std_normal_threshold           = 0.1;
+  double g_std_dis_threshold              = 0.3;
+
 }

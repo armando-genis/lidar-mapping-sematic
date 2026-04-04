@@ -1,6 +1,6 @@
 /**:
   ros__parameters:
-    lio.map.save_map: false
+    lio.map.save_map: true
     lio.map.if_filter: true
     lio.map.save_map_dir: "map"
     lio.map.map_name: "map.pcd"
@@ -49,7 +49,7 @@
 
     lio.eva.timer: true
 
-    lio.local_map.enable: true # true = odometry-only sliding-window mode, false = mapping mode
+    lio.local_map.enable: false # true = odometry-only sliding-window mode, false = mapping mode
     lio.local_map.radius: 50.0 # m  — keep keyframes within this radius
     lio.local_map.prune_interval: 10 # prune every N new keyframes
 
@@ -62,3 +62,25 @@
     lio.loop.search_num: 25 # half-width of neighbour KFs for ICP local map
     lio.loop.fitness_score: 0.6 # ICP acceptance threshold (lower = stricter)
     lio.loop.icp_leaf_size: 0.4 # m   — voxel leaf size for ICP cloud downsampling
+
+    lio.std.ds_size: 0.5                      # voxel downsample size before STD extraction [m]
+    lio.std.maximum_corner_num: 100           # max corner points per keyframe
+    lio.std.plane_merge_normal_thre: 0.1      # normal threshold to merge adjacent planes
+    lio.std.plane_detection_thre: 0.01        # min eigenvalue threshold for plane detection
+    lio.std.voxel_size: 1.0                   # voxel size for plane detection [m]
+    lio.std.voxel_init_num: 10                # min points per voxel to attempt plane fit
+    lio.std.proj_image_resolution: 0.5        # 2D projection grid resolution [m]
+    lio.std.proj_dis_min: 0.2                 # min distance from plane for projection [m]
+    lio.std.proj_dis_max: 5.0                 # max distance from plane for projection [m]
+    lio.std.corner_thre: 10.0                 # min point count to accept a corner
+    lio.std.descriptor_near_num: 10           # KNN neighbours used to form triangles
+    lio.std.descriptor_min_len: 1.0           # min triangle side length [m]
+    lio.std.descriptor_max_len: 10.0          # max triangle side length [m]
+    lio.std.non_max_suppression_radius: 3.0   # NMS radius for corner filtering [m]
+    lio.std.std_side_resolution: 0.2          # side length quantization step [m]
+    lio.std.candidate_num: 50                 # max loop candidates to evaluate
+    lio.std.rough_dis_threshold: 0.03         # rough side-length match threshold (ratio)
+    lio.std.vertex_diff_threshold: 0.7        # vertex intensity similarity threshold
+    lio.std.icp_threshold: 0.5                # plane-geometric verify acceptance score
+    lio.std.normal_threshold: 0.1             # normal alignment threshold for plane verify
+    lio.std.dis_threshold: 0.3                # point-to-plane distance threshold [m]

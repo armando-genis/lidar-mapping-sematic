@@ -29,6 +29,7 @@ find_package(PCL REQUIRED)
 find_package(Glog REQUIRED)
 find_package(basic REQUIRED)
 find_package(GTSAM REQUIRED QUIET)
+find_package(Ceres REQUIRED)
 
 
 rosidl_generate_interfaces(${PROJECT_NAME}
@@ -76,6 +77,7 @@ target_link_libraries(lio_odom PUBLIC
   pthread
   gtsam
   ${cpp_typesupport_target}
+  Ceres::ceres
 )
 
 add_executable(lidar_odom_node src/apps/super_lio_node.cpp)

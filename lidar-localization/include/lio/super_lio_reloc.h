@@ -39,10 +39,14 @@ private:
   void DownSample() override;
   void UpdateMap() override;
   void Output() override;
+  void pruneLocalMap();
 
 private:
   BASIC::CloudPtr init_obs_data_;
+  BASIC::CloudPtr full_map_;
   bool flg_get_init_guess_ = false;
+  bool first_update_ = true;
+  int  prune_counter_ = 0;
   BASIC::SE3 re_init_pose_;
   Eigen::Matrix4f rotation_matrix_{Eigen::Matrix4f::Identity()};
 };

@@ -27,6 +27,30 @@ SuperLIOLoop::SuperLIOLoop()
 
   rotation_matrix_                   = Eigen::Matrix4f::Identity();
   rotation_matrix_.block<3, 3>(0, 0) = R;
+
+  // STD config — filled from yaml-driven globals (see livox_360.yaml lio.std.*)
+  std_cfg_.ds_size_                    = g_std_ds_size;
+  std_cfg_.maximum_corner_num_         = g_std_maximum_corner_num;
+  std_cfg_.plane_merge_normal_thre_    = g_std_plane_merge_normal_thre;
+  std_cfg_.plane_detection_thre_       = g_std_plane_detection_thre;
+  std_cfg_.voxel_size_                 = g_std_voxel_size;
+  std_cfg_.voxel_init_num_             = g_std_voxel_init_num;
+  std_cfg_.proj_image_resolution_      = g_std_proj_image_resolution;
+  std_cfg_.proj_dis_min_               = g_std_proj_dis_min;
+  std_cfg_.proj_dis_max_               = g_std_proj_dis_max;
+  std_cfg_.corner_thre_                = g_std_corner_thre;
+  std_cfg_.descriptor_near_num_        = g_std_descriptor_near_num;
+  std_cfg_.descriptor_min_len_         = g_std_descriptor_min_len;
+  std_cfg_.descriptor_max_len_         = g_std_descriptor_max_len;
+  std_cfg_.non_max_suppression_radius_ = g_std_non_max_suppression_radius;
+  std_cfg_.std_side_resolution_        = g_std_std_side_resolution;
+  std_cfg_.candidate_num_              = g_std_candidate_num;
+  std_cfg_.rough_dis_threshold_        = g_std_rough_dis_threshold;
+  std_cfg_.vertex_diff_threshold_      = g_std_vertex_diff_threshold;
+  std_cfg_.icp_threshold_              = g_std_icp_threshold;
+  std_cfg_.normal_threshold_           = g_std_normal_threshold;
+  std_cfg_.dis_threshold_              = g_std_dis_threshold;
+  std_manager_ = STDescManager(std_cfg_);
 }
 
 // ============================================================================
@@ -196,6 +220,31 @@ void SuperLIOLoop::addKeyframe()
     kf_pos.y = static_cast<float>(last_pose_.t_(1));
     kf_pos.z = static_cast<float>(last_pose_.t_(2));
     kf_positions_->push_back(kf_pos);
+  }
+
+  {
+    // Project body-frame scan to world frame for STD extraction
+    pcl::PointCloud<pcl::PointXYZI>::Ptr world_cloud(
+        new pcl::PointCloud<pcl::PointXYZI>());
+    world_cloud->reserve(kf.cloud->size());
+    for (const auto &pt : kf.cloud->points) {
+      V3 pw = kf.pose * V3(pt.x, pt.y, pt.z);
+      pcl::PointXYZI p;
+      p.x = pw.x(); p.y = pw.y(); p.z = pw.z();
+      p.intensity = pt.intensity;
+      world_cloud->push_back(p);
+    }
+
+    // Downsample before STD extraction (same ds_size as config)
+    down_sampling_voxel(*world_cloud, std_cfg_.ds_size_);
+
+    std::vector<STDesc> stds;
+    std_manager_.GenerateSTDescs(world_cloud, stds);
+    std_manager_.AddSTDescs(stds);
+    kf_stds_.push_back(stds);
+
+    LOG(INFO) << GREEN << " ---> [STD] KF " << kf_count_
+              << " corners/descs: " << stds.size() << RESET;
   }
 
   last_kf_se3_ = last_pose_;
@@ -668,6 +717,22 @@ void SuperLIOLoop::publishCorrectedPath()
   }
 
   pub_corrected_path_->publish(path);
+}
+
+// ============================================================================
+//  saveSTDDatabase()
+// ============================================================================
+
+void SuperLIOLoop::saveSTDDatabase()
+{
+  std::string db_dir = g_save_map_dir + "/std_db";
+  LOG(INFO) << YELLOW << " ---> [STD] Saving database to: " << db_dir << RESET;
+  if (std_manager_.Save(db_dir)) {
+    LOG(INFO) << GREEN << " ---> [STD] Save OK."
+              << "  frames=" << std_manager_.plane_cloud_vec_.size() << RESET;
+  } else {
+    LOG(ERROR) << RED << " ---> [STD] Save FAILED." << RESET;
+  }
 }
 
 }  // namespace LI2Sup

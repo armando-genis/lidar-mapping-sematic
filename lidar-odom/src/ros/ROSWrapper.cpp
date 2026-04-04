@@ -237,6 +237,70 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.loop.icp_leaf_size", 0.4);
   node.get_parameter("lio.loop.icp_leaf_size", g_loop_icp_leaf_size);
 
+  // ================= STD descriptor =================
+  node.declare_parameter<double>("lio.std.ds_size", 0.5);
+  node.get_parameter("lio.std.ds_size", g_std_ds_size);
+
+  node.declare_parameter<int>("lio.std.maximum_corner_num", 100);
+  node.get_parameter("lio.std.maximum_corner_num", g_std_maximum_corner_num);
+
+  node.declare_parameter<double>("lio.std.plane_merge_normal_thre", 0.1);
+  node.get_parameter("lio.std.plane_merge_normal_thre", g_std_plane_merge_normal_thre);
+
+  node.declare_parameter<double>("lio.std.plane_detection_thre", 0.01);
+  node.get_parameter("lio.std.plane_detection_thre", g_std_plane_detection_thre);
+
+  node.declare_parameter<double>("lio.std.voxel_size", 1.0);
+  node.get_parameter("lio.std.voxel_size", g_std_voxel_size);
+
+  node.declare_parameter<int>("lio.std.voxel_init_num", 10);
+  node.get_parameter("lio.std.voxel_init_num", g_std_voxel_init_num);
+
+  node.declare_parameter<double>("lio.std.proj_image_resolution", 0.5);
+  node.get_parameter("lio.std.proj_image_resolution", g_std_proj_image_resolution);
+
+  node.declare_parameter<double>("lio.std.proj_dis_min", 0.2);
+  node.get_parameter("lio.std.proj_dis_min", g_std_proj_dis_min);
+
+  node.declare_parameter<double>("lio.std.proj_dis_max", 5.0);
+  node.get_parameter("lio.std.proj_dis_max", g_std_proj_dis_max);
+
+  node.declare_parameter<double>("lio.std.corner_thre", 10.0);
+  node.get_parameter("lio.std.corner_thre", g_std_corner_thre);
+
+  node.declare_parameter<int>("lio.std.descriptor_near_num", 10);
+  node.get_parameter("lio.std.descriptor_near_num", g_std_descriptor_near_num);
+
+  node.declare_parameter<double>("lio.std.descriptor_min_len", 1.0);
+  node.get_parameter("lio.std.descriptor_min_len", g_std_descriptor_min_len);
+
+  node.declare_parameter<double>("lio.std.descriptor_max_len", 10.0);
+  node.get_parameter("lio.std.descriptor_max_len", g_std_descriptor_max_len);
+
+  node.declare_parameter<double>("lio.std.non_max_suppression_radius", 3.0);
+  node.get_parameter("lio.std.non_max_suppression_radius", g_std_non_max_suppression_radius);
+
+  node.declare_parameter<double>("lio.std.std_side_resolution", 0.2);
+  node.get_parameter("lio.std.std_side_resolution", g_std_std_side_resolution);
+
+  node.declare_parameter<int>("lio.std.candidate_num", 50);
+  node.get_parameter("lio.std.candidate_num", g_std_candidate_num);
+
+  node.declare_parameter<double>("lio.std.rough_dis_threshold", 0.03);
+  node.get_parameter("lio.std.rough_dis_threshold", g_std_rough_dis_threshold);
+
+  node.declare_parameter<double>("lio.std.vertex_diff_threshold", 0.7);
+  node.get_parameter("lio.std.vertex_diff_threshold", g_std_vertex_diff_threshold);
+
+  node.declare_parameter<double>("lio.std.icp_threshold", 0.5);
+  node.get_parameter("lio.std.icp_threshold", g_std_icp_threshold);
+
+  node.declare_parameter<double>("lio.std.normal_threshold", 0.1);
+  node.get_parameter("lio.std.normal_threshold", g_std_normal_threshold);
+
+  node.declare_parameter<double>("lio.std.dis_threshold", 0.3);
+  node.get_parameter("lio.std.dis_threshold", g_std_dis_threshold);
+
   LOG(INFO) << GREEN << " ---> [Params]: Load from ROS2 parameter server."
             << RESET;
 }

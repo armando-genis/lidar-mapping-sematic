@@ -118,6 +118,29 @@ namespace LI2Sup{
   extern double g_loop_fitness_score;        // ICP acceptance threshold (lower = stricter)
   extern double g_loop_icp_leaf_size;        // voxel leaf size for ICP local map downsampling
 
+  /// STD descriptor parameters
+  extern double g_std_ds_size;
+  extern int    g_std_maximum_corner_num;
+  extern double g_std_plane_merge_normal_thre;
+  extern double g_std_plane_detection_thre;
+  extern double g_std_voxel_size;
+  extern int    g_std_voxel_init_num;
+  extern double g_std_proj_image_resolution;
+  extern double g_std_proj_dis_min;
+  extern double g_std_proj_dis_max;
+  extern double g_std_corner_thre;
+  extern int    g_std_descriptor_near_num;
+  extern double g_std_descriptor_min_len;
+  extern double g_std_descriptor_max_len;
+  extern double g_std_non_max_suppression_radius;
+  extern double g_std_std_side_resolution;
+  extern int    g_std_candidate_num;
+  extern double g_std_rough_dis_threshold;
+  extern double g_std_vertex_diff_threshold;
+  extern double g_std_icp_threshold;
+  extern double g_std_normal_threshold;
+  extern double g_std_dis_threshold;
+
 }
 
 #endif
