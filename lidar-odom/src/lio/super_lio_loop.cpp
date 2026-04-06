@@ -32,6 +32,7 @@ SuperLIOLoop::SuperLIOLoop()
   std_cfg_.ds_size_                    = g_std_ds_size;
   std_cfg_.maximum_corner_num_         = g_std_maximum_corner_num;
   std_cfg_.plane_merge_normal_thre_    = g_std_plane_merge_normal_thre;
+  std_cfg_.plane_merge_dis_thre_       = g_std_plane_merge_dis_thre;
   std_cfg_.plane_detection_thre_       = g_std_plane_detection_thre;
   std_cfg_.voxel_size_                 = g_std_voxel_size;
   std_cfg_.voxel_init_num_             = g_std_voxel_init_num;
@@ -50,6 +51,7 @@ SuperLIOLoop::SuperLIOLoop()
   std_cfg_.icp_threshold_              = g_std_icp_threshold;
   std_cfg_.normal_threshold_           = g_std_normal_threshold;
   std_cfg_.dis_threshold_              = g_std_dis_threshold;
+  std_cfg_.sub_frame_num_              = g_std_sub_frame_num;
   std_manager_ = STDescManager(std_cfg_);
 }
 
@@ -67,11 +69,15 @@ void SuperLIOLoop::DownSample()
 
 SuperLIOLoop::~SuperLIOLoop()
 {
-  // Signal the loop thread to stop and wait for it to finish.
+  // Signal background threads to stop and wait for them to finish.
   loop_thread_stop_.store(true);
-  if (loop_thread_.joinable()) {
-    loop_thread_.join();
+  if (loop_thread_.joinable()) loop_thread_.join();
+
+  if (g_save_map) {
+    std_thread_stop_.store(true);
+    if (std_thread_.joinable()) std_thread_.join();
   }
+
   delete isam_;
 }
 
@@ -92,7 +98,16 @@ void SuperLIOLoop::init()
   pub_loop_constraints_ = data_wrapper_->create_publisher<visualization_msgs::msg::MarkerArray>(
     "/super_lio/loop_closure_constraints", 1);
 
-  LOG(INFO) << GREEN << " ---> [SuperLIOLoop]: Path publisher active on /super_lio/corrected_path" << RESET;
+  LOG(INFO) << GREEN << " ---> [SuperLIOLoop]: Path publisher active on ----------> /super_lio/corrected_path" << RESET;
+
+  // ── STD descriptor thread — only started when save_map is true so that
+  //    descriptor extraction (expensive) is skipped during odometry-only runs.
+  if (g_save_map) {
+    std_thread_ = std::thread(&SuperLIOLoop::stdDescriptorThread, this);
+    LOG(INFO) << GREEN << " ---> [SuperLIOLoop]: STD descriptor thread started." << RESET;
+  } else {
+    LOG(INFO) << YELLOW << " ---> [SuperLIOLoop]: STD descriptor thread SKIPPED (save_map=false)." << RESET;
+  }
 
   if (!g_loop_closure_enable) {
     LOG(INFO) << YELLOW << " ---> [SuperLIOLoop]: Loop closure DISABLED — running in local-map odometry mode." << RESET;
@@ -222,29 +237,33 @@ void SuperLIOLoop::addKeyframe()
     kf_positions_->push_back(kf_pos);
   }
 
-  {
-    // Project body-frame scan to world frame for STD extraction
+  // Build accumulated world cloud and hand off to the STD thread.
+  // The main loop is NOT blocked — GenerateSTDescs runs in background.
+  // Only enqueue when save_map is true; otherwise STD extraction is skipped.
+  if (g_save_map) {
     pcl::PointCloud<pcl::PointXYZI>::Ptr world_cloud(
         new pcl::PointCloud<pcl::PointXYZI>());
-    world_cloud->reserve(kf.cloud->size());
-    for (const auto &pt : kf.cloud->points) {
-      V3 pw = kf.pose * V3(pt.x, pt.y, pt.z);
-      pcl::PointXYZI p;
-      p.x = pw.x(); p.y = pw.y(); p.z = pw.z();
-      p.intensity = pt.intensity;
-      world_cloud->push_back(p);
+
+    {
+      std::lock_guard<std::mutex> lock(mtx_kf_);
+      int n     = static_cast<int>(keyframes_.size());
+      int start = std::max(0, n - std_cfg_.sub_frame_num_);
+      for (int i = start; i < n; ++i) {
+        const auto &kfi = keyframes_[i];
+        for (const auto &pt : kfi.cloud->points) {
+          V3 pw = kfi.pose * V3(pt.x, pt.y, pt.z);
+          pcl::PointXYZI p;
+          p.x = pw.x(); p.y = pw.y(); p.z = pw.z();
+          p.intensity = pt.intensity;
+          world_cloud->push_back(p);
+        }
+      }
     }
 
-    // Downsample before STD extraction (same ds_size as config)
-    down_sampling_voxel(*world_cloud, std_cfg_.ds_size_);
-
-    std::vector<STDesc> stds;
-    std_manager_.GenerateSTDescs(world_cloud, stds);
-    std_manager_.AddSTDescs(stds);
-    kf_stds_.push_back(stds);
-
-    LOG(INFO) << GREEN << " ---> [STD] KF " << kf_count_
-              << " corners/descs: " << stds.size() << RESET;
+    {
+      std::lock_guard<std::mutex> qlock(mtx_std_queue_);
+      std_cloud_queue_.push(world_cloud);
+    }
   }
 
   last_kf_se3_ = last_pose_;
@@ -720,11 +739,72 @@ void SuperLIOLoop::publishCorrectedPath()
 }
 
 // ============================================================================
+//  STD descriptor background thread
+//
+//  Drains std_cloud_queue_, runs the expensive GenerateSTDescs + AddSTDescs
+//  pipeline off the main LIO thread.  The queue decouples keyframe insertion
+//  (fast, main thread) from descriptor extraction (slow, this thread).
+// ============================================================================
+
+void SuperLIOLoop::stdDescriptorThread()
+{
+  while (!std_thread_stop_.load()) {
+    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud;
+
+    {
+      std::lock_guard<std::mutex> lock(mtx_std_queue_);
+      if (!std_cloud_queue_.empty()) {
+        cloud = std_cloud_queue_.front();
+        std_cloud_queue_.pop();
+      }
+    }
+
+    if (!cloud) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      continue;
+    }
+
+    down_sampling_voxel(*cloud, std_cfg_.ds_size_);
+
+    std::vector<STDesc> stds;
+    std_manager_.GenerateSTDescs(cloud, stds);
+
+    // Temporary debug — remove after tuning
+    LOG(INFO) << YELLOW << " ---> [STD DEBUG] planes="
+              << (std_manager_.plane_cloud_vec_.empty() ? 0 
+                  : std_manager_.plane_cloud_vec_.back()->size())
+              << " corners="
+              << (std_manager_.corner_cloud_vec_.empty() ? 0
+                  : std_manager_.corner_cloud_vec_.back()->size())
+              << " descs=" << stds.size() << RESET;
+
+    std_manager_.AddSTDescs(stds);
+    {
+      std::lock_guard<std::mutex> lock(mtx_std_queue_);
+      kf_stds_.push_back(stds);
+    }
+
+    LOG(INFO) << GREEN << " ---> [STD] cloud_size=" << cloud->size()
+              << " descs=" << stds.size() << RESET;
+  }
+}
+
+// ============================================================================
 //  saveSTDDatabase()
 // ============================================================================
 
 void SuperLIOLoop::saveSTDDatabase()
 {
+  // Drain the queue before saving — any clouds still pending would be missing
+  // from the database if we save immediately.
+  LOG(INFO) << YELLOW << " ---> [STD] Waiting for descriptor thread to drain..." << RESET;
+  while (true) {
+    std::lock_guard<std::mutex> lock(mtx_std_queue_);
+    if (std_cloud_queue_.empty()) break;
+  }
+  // One extra cycle for the thread to finish its current GenerateSTDescs call.
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
   std::string db_dir = g_save_map_dir + "/std_db";
   LOG(INFO) << YELLOW << " ---> [STD] Saving database to: " << db_dir << RESET;
   if (std_manager_.Save(db_dir)) {
@@ -732,6 +812,22 @@ void SuperLIOLoop::saveSTDDatabase()
               << "  frames=" << std_manager_.plane_cloud_vec_.size() << RESET;
   } else {
     LOG(ERROR) << RED << " ---> [STD] Save FAILED." << RESET;
+  }
+
+  // Also save keyframe poses for visualization
+  std::string poses_path = g_save_map_dir + "/std_db/keyframe_poses.bin";
+  std::ofstream f(poses_path, std::ios::binary);
+  if (f) {
+    std::lock_guard<std::mutex> lock(mtx_kf_);
+    uint32_t n = static_cast<uint32_t>(keyframes_.size());
+    f.write(reinterpret_cast<const char*>(&n), sizeof(n));
+    for (const auto &kf : keyframes_) {
+      double tx = kf.pose.t_(0), ty = kf.pose.t_(1), tz = kf.pose.t_(2);
+      f.write(reinterpret_cast<const char*>(&tx), sizeof(double));
+      f.write(reinterpret_cast<const char*>(&ty), sizeof(double));
+      f.write(reinterpret_cast<const char*>(&tz), sizeof(double));
+    }
+    LOG(INFO) << GREEN << " ---> [STD] Saved " << n << " keyframe poses." << RESET;
   }
 }
 

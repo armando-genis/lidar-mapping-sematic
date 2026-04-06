@@ -6,6 +6,7 @@
 #include <mutex>
 #include <atomic>
 #include <vector>
+#include <queue>
 #include <unordered_map>
 
 // GTSAM – pose graph backend
@@ -60,6 +61,7 @@ public:
   ~SuperLIOLoop();
 
   void init() override;
+  void saveSTDDatabase();
 
 protected:
   // Called every frame from stateProcess() ─────────────────────────────────
@@ -99,7 +101,7 @@ private:
   void         publishCorrectedPath();
 
   // ── STDescManager ────────────────────────────────────────────────────────
-  void saveSTDDatabase();
+  void stdDescriptorThread();
 
   STDescManager                    std_manager_;
   std::vector<std::vector<STDesc>> kf_stds_;     // per-keyframe descriptors
@@ -139,6 +141,12 @@ private:
   // ── Loop thread ──────────────────────────────────────────────────────────
   std::thread       loop_thread_;
   std::atomic<bool> loop_thread_stop_{false};
+
+  // ── STD descriptor thread ─────────────────────────────────────────────────
+  std::thread                                       std_thread_;
+  std::atomic<bool>                                 std_thread_stop_{false};
+  std::mutex                                        mtx_std_queue_;
+  std::queue<pcl::PointCloud<pcl::PointXYZI>::Ptr>  std_cloud_queue_;
 
   // ── ICP voxel filter (only used by the loop thread) ─────────────────────
   pcl::VoxelGrid<BASIC::PointType> icp_ds_filter_;

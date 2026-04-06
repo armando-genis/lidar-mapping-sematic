@@ -368,12 +368,21 @@ void STDescManager::corner_extractor(
       OctoTree *conn = cur->connect_tree_[i];
 
       // require the connected plane to also connect to at least one other plane
-      bool use = false;
-      for (int j = 0; j < 6; j++) {
-        if (conn->is_check_connect_[j] && conn->connect_[j]) { use = true; break; }
-      }
-      if (!use) continue;
-      if (cur->voxel_points_.size() <= 10) continue;
+      // bool use = false;
+      // for (int j = 0; j < 6; j++) {
+      //   if (conn->is_check_connect_[j] && conn->connect_[j]) { use = true; break; }
+      // }
+      // if (!use) continue;
+
+      // ── REMOVED: secondary plane-to-plane connectivity requirement ────────
+      // The original code required the connected plane to also connect to
+      // another plane. This is too strict for indoor Velodyne environments
+      // where planar patches may be isolated. We accept any boundary voxel
+      // adjacent to a detected plane.
+      // ─────────────────────────────────────────────────────────────────────
+
+
+      if (cur->voxel_points_.size() <= 3) continue;
 
       Eigen::Vector3d proj_normal = conn->plane_ptr_->normal_;
       Eigen::Vector3d proj_center = conn->plane_ptr_->center_;

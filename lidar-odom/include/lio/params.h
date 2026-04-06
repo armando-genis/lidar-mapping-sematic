@@ -122,6 +122,7 @@ namespace LI2Sup{
   extern double g_std_ds_size;
   extern int    g_std_maximum_corner_num;
   extern double g_std_plane_merge_normal_thre;
+  extern double g_std_plane_merge_dis_thre;
   extern double g_std_plane_detection_thre;
   extern double g_std_voxel_size;
   extern int    g_std_voxel_init_num;
@@ -140,6 +141,7 @@ namespace LI2Sup{
   extern double g_std_icp_threshold;
   extern double g_std_normal_threshold;
   extern double g_std_dis_threshold;
+  extern int    g_std_sub_frame_num;
 
 }
 

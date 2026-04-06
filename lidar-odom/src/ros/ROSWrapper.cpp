@@ -247,6 +247,9 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.std.plane_merge_normal_thre", 0.1);
   node.get_parameter("lio.std.plane_merge_normal_thre", g_std_plane_merge_normal_thre);
 
+  node.declare_parameter<double>("lio.std.plane_merge_dis_thre", 0.1);
+  node.get_parameter("lio.std.plane_merge_dis_thre", g_std_plane_merge_dis_thre);
+
   node.declare_parameter<double>("lio.std.plane_detection_thre", 0.01);
   node.get_parameter("lio.std.plane_detection_thre", g_std_plane_detection_thre);
 
@@ -300,6 +303,9 @@ void LoadParamFromRos(rclcpp::Node& node)
 
   node.declare_parameter<double>("lio.std.dis_threshold", 0.3);
   node.get_parameter("lio.std.dis_threshold", g_std_dis_threshold);
+
+  node.declare_parameter<int>("lio.std.sub_frame_num", 10);
+  node.get_parameter("lio.std.sub_frame_num", g_std_sub_frame_num);
 
   LOG(INFO) << GREEN << " ---> [Params]: Load from ROS2 parameter server."
             << RESET;

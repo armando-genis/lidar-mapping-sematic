@@ -51,6 +51,36 @@ ros2 launch multicamera_lidar_calibration multiprocessing.launch.py
 
 ros2 launch lio_localization relocation.py
 
+
+
+
+
+```
+
+```bash
+colcon build --packages-select basic
+source install/setup.bash
+
+# lidar+imu odometry
+colcon build --packages-select lidar_odom \
+  --parallel-workers 1 \
+  --cmake-args -DCMAKE_BUILD_PARALLEL_LEVEL=2
+
+# lidar localization
+colcon build --packages-select lio_localization \
+  --parallel-workers 1 \
+  --cmake-args -DCMAKE_BUILD_PARALLEL_LEVEL=2
+
+# lidar semantic slam
+colcon build --packages-select semantic_lidar_slam \
+  --parallel-workers 1 \
+  --cmake-args -DCMAKE_BUILD_PARALLEL_LEVEL=2
+
+# lidar camera calibration
+colcon build --packages-select multicamera_lidar_calibration \
+  --parallel-workers 1 \
+  --cmake-args -DCMAKE_BUILD_PARALLEL_LEVEL=2
+
 ```
 
 ---

@@ -91,6 +91,8 @@ void SuperLIOReLoc::init(){
   effect_knn_idxs_.resize(20000);
   voxel_grid_fliter_.setLeafSize(g_voxel_fliter_size);
 
+  LOG(INFO) << GREEN << " ---> [SuperLIO]: lidar localization initialized pkg lidar-localization." << RESET;
+
   LOG(INFO) << GREEN << " ---> [SuperLIO]: initialized." << RESET;
 
   auto start_time = std::chrono::high_resolution_clock::now();

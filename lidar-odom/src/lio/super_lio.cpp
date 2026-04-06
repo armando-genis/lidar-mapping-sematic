@@ -86,6 +86,8 @@ void SuperLIO::init(){
 
   state_fn_ = &SuperLIO::stateWaitKFInit;
 
+  LOG(INFO) << GREEN << " ---> [SuperLIO]: lidar odometry initialized pkg lidar-odom." << RESET;
+
   LOG(INFO) << GREEN << " ---> [SuperLIO]: initialized." << RESET;
 }
 
@@ -333,6 +335,11 @@ void SuperLIO::ProcessCaceMap(){
 
 void SuperLIO::saveMap(){
   if(!g_save_map) return;
+
+  // Save the STD descriptor database only when save_map is true.
+  if (auto *loop = dynamic_cast<SuperLIOLoop*>(this)) {
+    loop->saveSTDDatabase();
+  }
   if(g_pcd_save_interval > 0){
     LOG(INFO) << YELLOW << " ---> Saving last cace ... " << RESET;
     if (point_map_->size() > 0) {
@@ -366,11 +373,7 @@ void SuperLIO::saveMap(){
     }
     pcl::io::savePCDFileBinary(map_name, latst_map);
     LOG(INFO) << GREEN << " ---> Save map success. File: " << map_name << RESET;
-    LOG(INFO) << GREEN << " ---> Map size: " << latst_map.size() << RESET;
-  }
-
-  if (auto *loop = dynamic_cast<SuperLIOLoop*>(this)) {
-    loop->saveSTDDatabase();
+    LOG(INFO) << GREEN << " ---> Map size-info: " << latst_map.size() << RESET;
   }
 }
 

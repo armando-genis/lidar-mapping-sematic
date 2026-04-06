@@ -98,6 +98,7 @@ namespace LI2Sup{
   double g_std_ds_size                    = 0.5;
   int    g_std_maximum_corner_num         = 100;
   double g_std_plane_merge_normal_thre    = 0.1;
+  double g_std_plane_merge_dis_thre       = 0.1;
   double g_std_plane_detection_thre       = 0.01;
   double g_std_voxel_size                 = 1.0;
   int    g_std_voxel_init_num             = 10;
@@ -116,5 +117,6 @@ namespace LI2Sup{
   double g_std_icp_threshold              = 0.5;
   double g_std_normal_threshold           = 0.1;
   double g_std_dis_threshold              = 0.3;
+  int    g_std_sub_frame_num              = 10;
 
 }
