@@ -178,6 +178,40 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<int>("lio.output.pub_step", 0);
   node.get_parameter("lio.output.pub_step", g_pub_step);
 
+  // ================= loop closure =================
+  node.declare_parameter<bool>("lio.loop_closure.enable", false);
+  node.get_parameter("lio.loop_closure.enable", g_loop_closure_enable);
+
+  node.declare_parameter<double>("lio.loop_closure.frequency", 1.0);
+  node.get_parameter("lio.loop_closure.frequency", g_loop_closure_frequency);
+
+  node.declare_parameter<double>("lio.loop_closure.surrounding_keyframe_adding_dist_threshold", 1.0);
+  node.get_parameter("lio.loop_closure.surrounding_keyframe_adding_dist_threshold", g_surrounding_keyframe_adding_dist_threshold);
+
+  node.declare_parameter<double>("lio.loop_closure.surrounding_keyframe_adding_angle_threshold", 0.2);
+  node.get_parameter("lio.loop_closure.surrounding_keyframe_adding_angle_threshold", g_surrounding_keyframe_adding_angle_threshold);
+
+  node.declare_parameter<double>("lio.loop_closure.surrounding_keyframe_density", 2.0);
+  node.get_parameter("lio.loop_closure.surrounding_keyframe_density", g_surrounding_keyframe_density);
+
+  node.declare_parameter<double>("lio.loop_closure.surrounding_keyframe_search_radius", 50.0);
+  node.get_parameter("lio.loop_closure.surrounding_keyframe_search_radius", g_surrounding_keyframe_search_radius);
+
+  node.declare_parameter<int>("lio.loop_closure.surrounding_keyframe_size", 50);
+  node.get_parameter("lio.loop_closure.surrounding_keyframe_size", g_surrounding_keyframe_size);
+
+  node.declare_parameter<double>("lio.loop_closure.history_keyframe_search_radius", 15.0);
+  node.get_parameter("lio.loop_closure.history_keyframe_search_radius", g_history_keyframe_search_radius);
+
+  node.declare_parameter<double>("lio.loop_closure.history_keyframe_search_time_diff", 30.0);
+  node.get_parameter("lio.loop_closure.history_keyframe_search_time_diff", g_history_keyframe_search_time_diff);
+
+  node.declare_parameter<int>("lio.loop_closure.history_keyframe_search_num", 25);
+  node.get_parameter("lio.loop_closure.history_keyframe_search_num", g_history_keyframe_search_num);
+
+  node.declare_parameter<double>("lio.loop_closure.history_keyframe_fitness_score", 0.3);
+  node.get_parameter("lio.loop_closure.history_keyframe_fitness_score", g_history_keyframe_fitness_score);
+
   // ================= relocation =================
   node.declare_parameter<bool>("lio.relocation.update_map", false);
   node.get_parameter("lio.relocation.update_map", g_update_map);

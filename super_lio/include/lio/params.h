@@ -98,6 +98,19 @@ namespace LI2Sup{
   extern bool g_update_map;
   extern double g_init_px, g_init_py, g_init_pz, g_init_roll, g_init_pitch, g_init_yaw;
 
+  /// loop closure
+  extern bool   g_loop_closure_enable;
+  extern double g_loop_closure_frequency;
+  extern double g_surrounding_keyframe_adding_dist_threshold;
+  extern double g_surrounding_keyframe_adding_angle_threshold;
+  extern double g_surrounding_keyframe_density;
+  extern double g_surrounding_keyframe_search_radius;
+  extern int    g_surrounding_keyframe_size;
+  extern double g_history_keyframe_search_radius;
+  extern double g_history_keyframe_search_time_diff;
+  extern int    g_history_keyframe_search_num;
+  extern double g_history_keyframe_fitness_score;
+
 }
 
 #endif

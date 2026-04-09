@@ -74,4 +74,17 @@ namespace LI2Sup{
   bool g_update_map = false;
   double g_init_px, g_init_py, g_init_pz, g_init_roll, g_init_pitch, g_init_yaw;
 
+  /// loop closure
+  bool   g_loop_closure_enable                        = false;
+  double g_loop_closure_frequency                     = 1.0;
+  double g_surrounding_keyframe_adding_dist_threshold = 1.0;
+  double g_surrounding_keyframe_adding_angle_threshold= 0.2;
+  double g_surrounding_keyframe_density               = 2.0;
+  double g_surrounding_keyframe_search_radius         = 50.0;
+  int    g_surrounding_keyframe_size                  = 50;
+  double g_history_keyframe_search_radius             = 15.0;
+  double g_history_keyframe_search_time_diff          = 30.0;
+  int    g_history_keyframe_search_num                = 25;
+  double g_history_keyframe_fitness_score             = 0.3;
+
 }

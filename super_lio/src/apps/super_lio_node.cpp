@@ -5,7 +5,7 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include "ros/ROSWrapper.h"
-#include "lio/super_lio_reloc.h"
+#include "lio/super_lio_loop.h"
 
 
 using namespace LI2Sup;
@@ -14,8 +14,10 @@ int main(int argc, char** argv){
   rclcpp::init(argc, argv);
 
   ROSWrapper::Ptr data_wrapper = std::make_shared<ROSWrapper>();
-  
-  auto lio = std::make_shared<SuperLIO>();
+
+  // Use SuperLIOLoop — when g_loop_closure_enable is false it behaves
+  // exactly like the plain SuperLIO (no keyframe saving, no thread).
+  auto lio = std::make_shared<SuperLIOLoop>();
   lio->setROSWrapper(data_wrapper);
   lio->init();
 

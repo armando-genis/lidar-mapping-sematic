@@ -46,3 +46,19 @@
     lio.output.pub_step: 1
 
     lio.eva.timer: true
+
+    # Surrounding map
+    lio.loop_closure.surrounding_keyframe_adding_dist_threshold: 0.5   # meters, regulate keyframe adding threshold
+    lio.loop_closure.surrounding_keyframe_adding_angle_threshold: 0.2  # radians, regulate keyframe adding threshold
+    lio.loop_closure.surrounding_keyframe_density: 2.0                 # meters, downsample surrounding keyframe poses
+    lio.loop_closure.surrounding_keyframe_search_radius: 50.0          # meters, within n meters scan-to-map optimization
+                                                                        # (when loop closure disabled)
+
+    # Loop closure
+    lio.loop_closure.enable: true
+    lio.loop_closure.frequency: 2.0           # Hz, regulate loop closure constraint add frequency
+    lio.loop_closure.surrounding_keyframe_size: 10  # submap size (when loop closure enabled)
+    lio.loop_closure.history_keyframe_search_radius: 40.0   # meters, key frame within n meters will be considered
+    lio.loop_closure.history_keyframe_search_time_diff: 10.0 # seconds, key frame n seconds older will be considered
+    lio.loop_closure.history_keyframe_search_num: 50         # number of history key frames fused into submap
+    lio.loop_closure.history_keyframe_fitness_score: 0.5     # icp threshold, the smaller the better alignment
