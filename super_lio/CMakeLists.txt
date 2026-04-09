@@ -91,12 +91,6 @@ target_link_libraries(relocation_node
   ${cpp_typesupport_target}
 )
 
-add_executable(super_lio_std_node src/apps/super_lio_std_node.cpp)
-target_link_libraries(super_lio_std_node
-  lio
-  ${cpp_typesupport_target}
-)
-
 install(TARGETS
   lio
   ARCHIVE DESTINATION lib
@@ -110,11 +104,6 @@ install(TARGETS
 
 install(TARGETS
   relocation_node
-  DESTINATION lib/${PROJECT_NAME}
-)
-
-install(TARGETS
-  super_lio_std_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
