@@ -261,10 +261,13 @@ public:
                        std::vector<STDesc> &stds_vec);
 
   // Search for loop candidate. Returns frame_id (-1 = no match) and score.
+  // source_plane_cloud must be plane_cloud_vec_[cur_id] — never .back().
   void SearchLoop(const std::vector<STDesc> &stds_vec,
+                  const pcl::PointCloud<pcl::PointXYZINormal>::Ptr &source_plane_cloud,
                   std::pair<int, double> &loop_result,
                   std::pair<Eigen::Vector3d, Eigen::Matrix3d> &loop_transform,
-                  std::vector<std::pair<STDesc,STDesc>> &loop_std_pair);
+                  std::vector<std::pair<STDesc,STDesc>> &loop_std_pair,
+                  bool skip_geometric_verify = false);
 
   // Add descriptors to database (call after GenerateSTDescs per keyframe)
   void AddSTDescs(const std::vector<STDesc> &stds_vec);
@@ -317,9 +320,11 @@ private:
 
   void candidate_verify(
       const STDMatchList &candidate_matcher,
+      const pcl::PointCloud<pcl::PointXYZINormal>::Ptr &source_plane_cloud,
       double &verify_score,
       std::pair<Eigen::Vector3d, Eigen::Matrix3d> &relative_pose,
-      std::vector<std::pair<STDesc,STDesc>> &sucess_match_vec);
+      std::vector<std::pair<STDesc,STDesc>> &sucess_match_vec,
+      bool skip_geometric_verify = false);
 
   void triangle_solver(std::pair<STDesc,STDesc> &std_pair,
                        Eigen::Vector3d &t, Eigen::Matrix3d &rot);

@@ -307,6 +307,9 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<int>("lio.std.sub_frame_num", 10);
   node.get_parameter("lio.std.sub_frame_num", g_std_sub_frame_num);
 
+  node.declare_parameter<int>("lio.std.skip_near_num", 20);
+  node.get_parameter("lio.std.skip_near_num", g_std_skip_near_num);
+
   LOG(INFO) << GREEN << " ---> [Params]: Load from ROS2 parameter server."
             << RESET;
 }

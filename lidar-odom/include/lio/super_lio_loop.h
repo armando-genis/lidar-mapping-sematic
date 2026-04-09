@@ -4,6 +4,7 @@
 
 #include <thread>
 #include <mutex>
+#include <shared_mutex>
 #include <atomic>
 #include <vector>
 #include <queue>
@@ -20,6 +21,7 @@
 
 // PCL utilities for ICP and KD-tree
 #include <pcl/registration/icp.h>
+#include <pcl/registration/gicp.h>
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/filters/voxel_grid.h>
 
@@ -106,6 +108,7 @@ private:
   STDescManager                    std_manager_;
   std::vector<std::vector<STDesc>> kf_stds_;     // per-keyframe descriptors
   ConfigSetting                    std_cfg_;      // STD parameters
+  mutable std::shared_mutex        mtx_std_manager_;  // readers share; writer (STD thread) exclusive
 
 
 private:
@@ -133,7 +136,8 @@ private:
   std::vector<std::pair<int, int>>                         loop_index_queue_;
   std::vector<gtsam::Pose3>                                loop_pose_queue_;
   std::vector<gtsam::noiseModel::Diagonal::shared_ptr>     loop_noise_queue_;
-  std::unordered_map<int, int>                             loop_history_;   // curID -> preID
+  std::unordered_map<int, int>                             loop_history_;        // curID -> preID (-1 = exhausted)
+  std::unordered_map<int, int>                             loop_failed_attempts_; // curID -> fail count
 
   // ── Rebuild signal ───────────────────────────────────────────────────────
   std::atomic<bool> flag_rebuild_{false};

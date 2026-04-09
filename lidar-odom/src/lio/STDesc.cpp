@@ -682,6 +682,12 @@ void STDescManager::candidate_selector(
     }
     candidate_matcher_vec.push_back(ml);
   }
+
+  std::cout << "\033[33m ---> [STD CandSel]"
+            << " input_stds=" << stds_vec.size()
+            << " candidates_found=" << candidate_matcher_vec.size()
+            << " db_buckets=" << data_base_.size()
+            << "\033[0m" << std::endl;
 }
 
 void STDescManager::triangle_solver(
@@ -710,9 +716,11 @@ void STDescManager::triangle_solver(
 
 void STDescManager::candidate_verify(
     const STDMatchList &candidate_matcher,
+    const pcl::PointCloud<pcl::PointXYZINormal>::Ptr &source_plane_cloud,
     double &verify_score,
     std::pair<Eigen::Vector3d, Eigen::Matrix3d> &relative_pose,
-    std::vector<std::pair<STDesc,STDesc>> &sucess_match_vec)
+    std::vector<std::pair<STDesc,STDesc>> &sucess_match_vec,
+    bool skip_geometric_verify)
 {
   sucess_match_vec.clear();
   int skip_len = (int)(candidate_matcher.match_list_.size() / 50) + 1;
@@ -747,6 +755,12 @@ void STDescManager::candidate_verify(
     if (vote_list[i] > max_vote) { max_vote = vote_list[i]; max_vote_index = i; }
   }
 
+  std::cout << "\033[33m ---> [STD Verify]"
+            << " match_list=" << candidate_matcher.match_list_.size()
+            << " use_size=" << use_size
+            << " max_vote=" << max_vote
+            << "\033[0m" << std::endl;
+
   if (max_vote < 4) { verify_score = -1; return; }
 
   auto best_pair = candidate_matcher.match_list_[max_vote_index * skip_len];
@@ -765,10 +779,16 @@ void STDescManager::candidate_verify(
       sucess_match_vec.push_back(vp);
   }
 
-  verify_score = plane_geometric_verify(
-      plane_cloud_vec_.back(),
-      plane_cloud_vec_[candidate_matcher.match_id_.second],
-      relative_pose);
+  if (skip_geometric_verify) {
+    // Z drift >> dis_threshold — skip plane overlap check for initial guess.
+    // Score proportional to triangle vote consistency (max_vote=20 → 1.0).
+    verify_score = std::min(1.0, max_vote / 20.0);
+  } else {
+    verify_score = plane_geometric_verify(
+        source_plane_cloud,
+        plane_cloud_vec_[candidate_matcher.match_id_.second],
+        relative_pose);
+  }
 }
 
 double STDescManager::plane_geometric_verify(
@@ -818,9 +838,11 @@ double STDescManager::plane_geometric_verify(
 
 void STDescManager::SearchLoop(
     const std::vector<STDesc> &stds_vec,
+    const pcl::PointCloud<pcl::PointXYZINormal>::Ptr &source_plane_cloud,
     std::pair<int, double> &loop_result,
     std::pair<Eigen::Vector3d, Eigen::Matrix3d> &loop_transform,
-    std::vector<std::pair<STDesc,STDesc>> &loop_std_pair)
+    std::vector<std::pair<STDesc,STDesc>> &loop_std_pair,
+    bool skip_geometric_verify)
 {
   if (stds_vec.empty()) {
     loop_result = {-1, 0};
@@ -839,7 +861,7 @@ void STDescManager::SearchLoop(
     double score = -1;
     std::pair<Eigen::Vector3d, Eigen::Matrix3d> pose;
     std::vector<std::pair<STDesc,STDesc>> matches;
-    candidate_verify(cm, score, pose, matches);
+    candidate_verify(cm, source_plane_cloud, score, pose, matches, skip_geometric_verify);
     if (score > best_score) {
       best_score     = score;
       best_id        = cm.match_id_.second;

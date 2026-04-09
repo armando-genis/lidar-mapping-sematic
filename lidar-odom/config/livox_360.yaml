@@ -1,6 +1,6 @@
 /**:
   ros__parameters:
-    lio.map.save_map: false
+    lio.map.save_map: true
     lio.map.if_filter: true
     lio.map.save_map_dir: "map"
     lio.map.map_name: "map.pcd"
@@ -49,41 +49,42 @@
 
     lio.eva.timer: true
 
-    lio.local_map.enable: true # true = odometry-only sliding-window mode, false = mapping mode
+    lio.local_map.enable: false # true = odometry-only sliding-window mode, false = mapping mode
     lio.local_map.radius: 50.0 # m  — keep keyframes within this radius
     lio.local_map.prune_interval: 10 # prune every N new keyframes
 
     lio.loop.enable: true
     lio.loop.frequency: 1.0 # Hz  — loop thread rate
-    lio.loop.keyframe_add_dist: 1.0 # m   — save keyframe every 1m of travel
+    lio.loop.keyframe_add_dist: 0.5 # m   — save keyframe every 0.5m (denser = more loop constraints to average Z error)
     lio.loop.keyframe_add_angle: 0.2 # rad — or every ~11deg of rotation
     lio.loop.search_radius: 15.0 # m   — KD-tree candidate search radius
-    lio.loop.search_time_diff: 30.0 # s   — candidate must be at least 30s old
-    lio.loop.search_num: 25 # half-width of neighbour KFs for ICP local map
-    lio.loop.fitness_score: 0.6 # ICP acceptance threshold (lower = stricter)
-    lio.loop.icp_leaf_size: 0.4 # m   — voxel leaf size for ICP cloud downsampling
+    lio.loop.search_time_diff: 15.0 # s   — candidate must be at least 30s old
+    lio.loop.search_num: 5 # half-width of neighbour KFs for ICP local map (~45k pts pre-downsample)
+    lio.loop.fitness_score: 1.0 # ICP acceptance threshold
+    lio.loop.icp_leaf_size: 0.4 # m   — coarser leaf reduces 90k→~5k pts, keeps correspondences unambiguous
 
-    lio.std.ds_size: 0.2 # voxel downsample size before STD extraction [m]
+    lio.std.ds_size: 0.25 # voxel downsample size before STD extraction [m]
     lio.std.maximum_corner_num: 200 # max corner points per keyframe
-    lio.std.plane_merge_normal_thre: 0.5 # normal threshold to merge adjacent planes
+    lio.std.plane_merge_normal_thre: 0.1 # normal threshold to merge adjacent planes (was 0.5)
     lio.std.plane_merge_dis_thre: 0.1 # distance threshold to merge adjacent planes
     lio.std.plane_detection_thre: 0.02 # min eigenvalue threshold for plane detection
-    lio.std.voxel_size: 0.5 # voxel size for plane detection [m]
-    lio.std.voxel_init_num: 5 # min points per voxel to attempt plane fit
+    lio.std.voxel_size: 2.0 # voxel size for plane detection [m] (was 0.5)
+    lio.std.voxel_init_num: 3 # min points per voxel to attempt plane fit
     lio.std.proj_image_resolution: 0.3 # 2D projection grid resolution [m]
-    lio.std.proj_dis_min: 0.05 # min distance from plane for projection [m]
+    lio.std.proj_dis_min: 0.0 # min distance from plane for projection [m] (was 0.05)
     lio.std.proj_dis_max: 3.0 # max distance from plane for projection [m]
-    lio.std.corner_thre: 3.0 # min point count to accept a corner
-    lio.std.descriptor_near_num: 10 # KNN neighbours used to form triangles
-    lio.std.descriptor_min_len: 0.5 # min triangle side length [m]
-    lio.std.descriptor_max_len: 8.0 # max triangle side length [m]
+    lio.std.corner_thre: 5.0 # min point count to accept a corner (was 3.0)
+    lio.std.descriptor_near_num: 20 # KNN neighbours used to form triangles (was 10)
+    lio.std.descriptor_min_len: 1.5 # min triangle side length [m] (was 0.5)
+    lio.std.descriptor_max_len: 20.0 # max triangle side length [m] (was 8.0)
     lio.std.non_max_suppression_radius: 2.0 # NMS radius for corner filtering [m]
     lio.std.std_side_resolution: 0.2 # side length quantization step [m]
     lio.std.candidate_num: 50 # max loop candidates to evaluate
     lio.std.rough_dis_threshold: 0.03 # rough side-length match threshold (ratio)
-    lio.std.vertex_diff_threshold: 0.7 # vertex intensity similarity threshold
-    lio.std.icp_threshold: 0.5 # plane-geometric verify acceptance score
+    lio.std.vertex_diff_threshold: 0.5 # vertex intensity similarity threshold (was 0.7)
+    lio.std.icp_threshold: 0.4 # plane-geometric verify acceptance score (was 0.5)
     lio.std.normal_threshold: 0.1 # normal alignment threshold for plane verify
     lio.std.dis_threshold: 0.3 # point-to-plane distance threshold [m]
-    lio.std.sub_frame_num: 10 # number of keyframes to accumulate per STD descriptor set
+    lio.std.sub_frame_num: 5 # keyframes to accumulate per STD descriptor set (was 10)
+    lio.std.skip_near_num: 20 # skip STD candidates within last N STD-keyframes (prevents self-match)
 

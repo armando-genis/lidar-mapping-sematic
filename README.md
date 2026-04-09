@@ -81,6 +81,10 @@ colcon build --packages-select multicamera_lidar_calibration \
   --parallel-workers 1 \
   --cmake-args -DCMAKE_BUILD_PARALLEL_LEVEL=2
 
+colcon build --packages-select super_lio \
+  --parallel-workers 1 \
+  --cmake-args -DCMAKE_BUILD_PARALLEL_LEVEL=2
+
 ```
 
 ---

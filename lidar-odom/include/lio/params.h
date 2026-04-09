@@ -142,6 +142,7 @@ namespace LI2Sup{
   extern double g_std_normal_threshold;
   extern double g_std_dis_threshold;
   extern int    g_std_sub_frame_num;
+  extern int    g_std_skip_near_num;
 
 }
 

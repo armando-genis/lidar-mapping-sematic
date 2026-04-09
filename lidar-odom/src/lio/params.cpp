@@ -118,5 +118,6 @@ namespace LI2Sup{
   double g_std_normal_threshold           = 0.1;
   double g_std_dis_threshold              = 0.3;
   int    g_std_sub_frame_num              = 10;
+  int    g_std_skip_near_num             = 20;
 
 }

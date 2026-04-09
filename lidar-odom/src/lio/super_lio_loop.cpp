@@ -1,6 +1,7 @@
 
 #include "lio/super_lio_loop.h"
 #include "basic/logs.h"
+#include <iomanip>
 
 using namespace BASIC;
 
@@ -52,6 +53,7 @@ SuperLIOLoop::SuperLIOLoop()
   std_cfg_.normal_threshold_           = g_std_normal_threshold;
   std_cfg_.dis_threshold_              = g_std_dis_threshold;
   std_cfg_.sub_frame_num_              = g_std_sub_frame_num;
+  std_cfg_.skip_near_num_             = g_std_skip_near_num;
   std_manager_ = STDescManager(std_cfg_);
 }
 
@@ -165,6 +167,11 @@ void SuperLIOLoop::Output()
   if (new_keyframe_) {
     new_keyframe_ = false;
 
+    LOG(INFO) << YELLOW << " ---> [Output]: new_keyframe kf_count_=" << kf_count_
+              << " flag_rebuild=" << flag_rebuild_.load()
+              << " prune_counter=" << prune_counter_
+              << RESET;
+
     // ── Loop closure: drive the GTSAM factor graph ────────────────────────
     if (g_loop_closure_enable) {
       addOdomFactor();
@@ -226,6 +233,10 @@ void SuperLIOLoop::addKeyframe()
   kf.cloud.reset(new PointCloudType());
   *kf.cloud = *ds_undistort_;
 
+  // Build the accumulated world cloud inside the same mtx_kf_ scope so we
+  // only acquire the lock once instead of twice.
+  pcl::PointCloud<pcl::PointXYZI>::Ptr world_cloud;
+
   {
     std::lock_guard<std::mutex> lock(mtx_kf_);
     keyframes_.push_back(kf);
@@ -235,17 +246,11 @@ void SuperLIOLoop::addKeyframe()
     kf_pos.y = static_cast<float>(last_pose_.t_(1));
     kf_pos.z = static_cast<float>(last_pose_.t_(2));
     kf_positions_->push_back(kf_pos);
-  }
 
-  // Build accumulated world cloud and hand off to the STD thread.
-  // The main loop is NOT blocked — GenerateSTDescs runs in background.
-  // Only enqueue when save_map is true; otherwise STD extraction is skipped.
-  if (g_save_map) {
-    pcl::PointCloud<pcl::PointXYZI>::Ptr world_cloud(
-        new pcl::PointCloud<pcl::PointXYZI>());
-
-    {
-      std::lock_guard<std::mutex> lock(mtx_kf_);
+    // Build accumulated world cloud for STD extraction (background thread).
+    // Only when save_map is true; otherwise STD extraction is skipped.
+    if (g_save_map) {
+      world_cloud.reset(new pcl::PointCloud<pcl::PointXYZI>());
       int n     = static_cast<int>(keyframes_.size());
       int start = std::max(0, n - std_cfg_.sub_frame_num_);
       for (int i = start; i < n; ++i) {
@@ -259,11 +264,11 @@ void SuperLIOLoop::addKeyframe()
         }
       }
     }
+  }
 
-    {
-      std::lock_guard<std::mutex> qlock(mtx_std_queue_);
-      std_cloud_queue_.push(world_cloud);
-    }
+  if (world_cloud) {
+    std::lock_guard<std::mutex> qlock(mtx_std_queue_);
+    std_cloud_queue_.push(world_cloud);
   }
 
   last_kf_se3_ = last_pose_;
@@ -302,12 +307,23 @@ void SuperLIOLoop::addOdomFactor()
   last_kf_gtsam_ = cur_gtsam;
   has_last_kf_   = true;
   kf_count_++;
+
+  LOG(INFO) << YELLOW << " ---> [Graph]: OdomFactor added kf_count_=" << kf_count_
+            << " last_kf_se3_.t="
+            << last_kf_se3_.t_(0) << ","
+            << last_kf_se3_.t_(1) << ","
+            << last_kf_se3_.t_(2)
+            << RESET;
 }
 
 void SuperLIOLoop::addLoopFactor()
 {
   std::lock_guard<std::mutex> lock(mtx_loop_);
   if (loop_index_queue_.empty()) return;
+
+  LOG(INFO) << YELLOW << " ---> [Graph]: LoopFactors consumed count="
+            << loop_index_queue_.size()
+            << RESET;
 
   for (size_t i = 0; i < loop_index_queue_.size(); ++i) {
     int idx_from = loop_index_queue_[i].first;
@@ -326,6 +342,12 @@ void SuperLIOLoop::addLoopFactor()
 
 void SuperLIOLoop::optimizeGraph(bool loop_closed)
 {
+  LOG(INFO) << YELLOW << " ---> [Graph]: iSAM2 update loop_closed=" << loop_closed
+            << " graph_factors=" << gtsam_graph_.size()
+            << " init_vals=" << gtsam_init_vals_.size()
+            << " estimate_size=" << isam_estimate_.size()
+            << RESET;
+
   isam_->update(gtsam_graph_, gtsam_init_vals_);
   isam_->update();
 
@@ -354,6 +376,11 @@ void SuperLIOLoop::rebuildMap()
 {
   // ── 1. Corrected poses from iSAM2 ────────────────────────────────────────
   gtsam::Values corrected = isam_->calculateEstimate();
+
+  LOG(INFO) << YELLOW << " ---> [Rebuild]: START kf_count_=" << kf_count_
+            << " keyframes.size()=" << keyframes_.size()
+            << " corrected.size()=" << corrected.size()
+            << RESET;
 
   // ── 2 & 3. Re-insert keyframe clouds into a fresh iVox ───────────────────
   ivox_.reset(new OctVoxMapType(OctVoxMapType::Options{g_ivox_resolution, g_ivox_capacity}));
@@ -404,6 +431,10 @@ void SuperLIOLoop::rebuildMap()
     last_kf_gtsam_  = toGtsamPose(corrected_se3);
     last_pose_      = corrected_se3;
   }
+
+  LOG(INFO) << GREEN << " ---> [Rebuild]: DONE ivox reinserted kf_count_=" << kf_count_
+            << " keyframes.size()=" << keyframes_.size()
+            << RESET;
 }
 
 // ============================================================================
@@ -434,44 +465,20 @@ bool SuperLIOLoop::performLoopClosure()
 
   if (!detectLoop(&cur_id, &pre_id)) return false;
 
-  // ── Build local maps ──────────────────────────────────────────────────────
-  CloudPtr cur_cloud(new PointCloudType());
-  CloudPtr pre_cloud(new PointCloudType());
-
-  buildLocalMap(cur_cloud, cur_id, 0);                      // current: single keyframe
-  buildLocalMap(pre_cloud, pre_id, g_loop_search_num);      // previous: wide neighbourhood
-
-  if (cur_cloud->size() < 300 || pre_cloud->size() < 1000) {
-    LOG(WARNING) << YELLOW << " ---> [Loop]: Candidate clouds too small ("
-                 << cur_cloud->size() << " / " << pre_cloud->size() << "), skipped." << RESET;
-    return false;
+  {
+    size_t pending = 0;
+    {
+      std::lock_guard<std::mutex> lk(mtx_loop_);
+      pending = loop_index_queue_.size();
+    }
+    LOG(INFO) << YELLOW << " ---> [Loop]: Candidate detected cur=" << cur_id
+              << " pre=" << pre_id
+              << " kf_count_=" << kf_count_
+              << " flag_rebuild=" << flag_rebuild_.load()
+              << " pending_loops=" << pending
+              << RESET;
   }
 
-  // ── ICP alignment ─────────────────────────────────────────────────────────
-  pcl::IterativeClosestPoint<PointType, PointType> icp;
-  icp.setMaxCorrespondenceDistance(g_loop_search_radius * 2.0);
-  icp.setMaximumIterations(100);
-  icp.setTransformationEpsilon(1e-6);
-  icp.setEuclideanFitnessEpsilon(1e-6);
-  icp.setRANSACIterations(0);
-
-  icp.setInputSource(cur_cloud);
-  icp.setInputTarget(pre_cloud);
-  CloudPtr unused(new PointCloudType());
-  icp.align(*unused);
-
-  if (!icp.hasConverged() || icp.getFitnessScore() > g_loop_fitness_score) {
-    LOG(INFO) << YELLOW << " ---> [Loop]: ICP rejected (converged="
-              << icp.hasConverged()
-              << ", score=" << icp.getFitnessScore() << ")." << RESET;
-    return false;
-  }
-
-  LOG(INFO) << GREEN << " ---> [Loop]: Accepted! cur=" << cur_id
-            << " pre=" << pre_id
-            << " score=" << icp.getFitnessScore() << RESET;
-
-  // ── Compute pose correction ───────────────────────────────────────────────
   SE3 cur_pose, pre_pose;
   {
     std::lock_guard<std::mutex> lock(mtx_kf_);
@@ -479,6 +486,256 @@ bool SuperLIOLoop::performLoopClosure()
     pre_pose = keyframes_[pre_id].pose;
   }
 
+  // ── Try STD plane ICP first — better Z accuracy than point ICP ───────────
+  if (g_save_map) {
+    bool stds_ready = false;
+    std::vector<STDesc> cur_stds;
+    {
+      std::shared_lock<std::shared_mutex> lock(mtx_std_manager_);
+      stds_ready = (cur_id < (int)kf_stds_.size() &&
+                    pre_id < (int)kf_stds_.size() &&
+                    !kf_stds_[cur_id].empty());
+      if (stds_ready) cur_stds = kf_stds_[cur_id];
+    }
+
+    if (!stds_ready) {
+      LOG(INFO) << YELLOW << " ---> [Loop+STD]: STD thread lagging "
+                << "(kf_stds_.size()=" << kf_stds_.size()
+                << " cur_id=" << cur_id << "), falling back to ICP." << RESET;
+    }
+
+    if (stds_ready) {
+      std::pair<int, double>                           loop_result;
+      std::pair<Eigen::Vector3d, Eigen::Matrix3d>      loop_transform;
+      std::vector<std::pair<STDesc, STDesc>>           loop_pairs;
+      bool plane_cloud_available = false;
+
+      {
+        // shared_lock: SearchLoop is a read-only operation;
+        // concurrent reads are fine and the STD write thread won't be starved.
+        std::shared_lock<std::shared_mutex> lock(mtx_std_manager_);
+        plane_cloud_available =
+            (cur_id < (int)std_manager_.plane_cloud_vec_.size() &&
+             pre_id < (int)std_manager_.plane_cloud_vec_.size());
+
+        if (plane_cloud_available) {
+          // skip_geometric_verify=true: plane_geometric_verify uses dis_threshold_=0.3m
+          // but Z drift can be 0.3-0.9m, so ALL plane correspondences fail → score≈0.
+          // Instead score = min(1.0, max_vote/20.0) based purely on triangle consistency.
+          std_manager_.SearchLoop(cur_stds,
+                                  std_manager_.plane_cloud_vec_[cur_id],
+                                  loop_result, loop_transform, loop_pairs,
+                                  /*skip_geometric_verify=*/true);
+
+          LOG(INFO) << YELLOW << " ---> [STD Diag]"
+                    << " cur_id=" << cur_id
+                    << " pre_id=" << pre_id
+                    << " cur_stds=" << cur_stds.size()
+                    << " db_size=" << std_manager_.data_base_.size()
+                    << " plane_vec_size=" << std_manager_.plane_cloud_vec_.size()
+                    << " cur_frame_id=" << (cur_stds.empty() ? -1 : (int)cur_stds[0].frame_id_)
+                    << " loop_result.first=" << loop_result.first
+                    << " loop_result.second=" << loop_result.second
+                    << RESET;
+
+          // Do NOT call PlaneGeomrtricIcp here: it uses dis_threshold_=0.3m for plane
+          // correspondences, but the triangle solver's Z component is corrupted by
+          // ESKF Z drift — p2plane >> 0.3 → zero residuals → transform unchanged or
+          // diverges. Z correction is done in the acceptance block below.
+        }
+      }
+
+      if (plane_cloud_available &&
+          loop_result.first >= 0 &&
+          loop_result.second > std_cfg_.icp_threshold_) {
+
+        // Use the STD-matched frame as the actual loop anchor.
+        // detectLoop's pre_id is a spatial proximity heuristic; STD finds the
+        // geometrically consistent match — they may differ by several frames.
+        int std_pre_id = loop_result.first;
+        SE3 std_pre_pose;
+        double std_pre_stamp = 0.0;
+        double cur_stamp     = 0.0;
+        {
+          std::lock_guard<std::mutex> lk(mtx_kf_);
+          if (std_pre_id >= (int)keyframes_.size()) goto fallback_icp;
+          std_pre_pose  = keyframes_[std_pre_id].pose;
+          std_pre_stamp = keyframes_[std_pre_id].timestamp;
+          cur_stamp     = keyframes_[cur_id].timestamp;
+        }
+
+        // ── Spatial sanity check ────────────────────────────────────────────
+        // STD with skip_geometric_verify can match triangles from structurally
+        // similar but physically distant locations.  We validate the STD match
+        // against BOTH reference frames:
+        //  (a) std_pre must be within g_loop_search_radius of cur in XY
+        //  (b) std_pre must be within g_loop_search_radius of pre (KD-tree candidate) in XY
+        // Using XY only because Z is drifted.
+        {
+          float xy_dist_cur = (std_pre_pose.t_.head<2>() -
+                               cur_pose.t_.head<2>()).norm();
+          float xy_dist_pre = (std_pre_pose.t_.head<2>() -
+                               pre_pose.t_.head<2>()).norm();
+          float limit = static_cast<float>(g_loop_search_radius);
+          if (xy_dist_cur > limit || xy_dist_pre > limit) {
+            LOG(INFO) << YELLOW << " ---> [Loop+STD]: Rejected — std_pre XY too far"
+                      << " std_pre=" << std_pre_id
+                      << " xy_from_cur=" << std::fixed << std::setprecision(2) << xy_dist_cur
+                      << "m xy_from_pre=" << xy_dist_pre
+                      << "m > radius=" << g_loop_search_radius << "m" << RESET;
+            goto fallback_icp;
+          }
+        }
+
+        // ── Temporal sanity check ───────────────────────────────────────────
+        // std_pre must be old enough to be from a different traversal pass.
+        {
+          double time_gap = cur_stamp - std_pre_stamp;
+          if (time_gap < g_loop_search_time_diff) {
+            LOG(INFO) << YELLOW << " ---> [Loop+STD]: Rejected — std_pre too recent"
+                      << " std_pre=" << std_pre_id
+                      << " time_gap=" << std::fixed << std::setprecision(1) << time_gap
+                      << "s < " << g_loop_search_time_diff << "s" << RESET;
+            goto fallback_icp;
+          }
+        }
+
+        // ── Z displacement sanity check ─────────────────────────────────────
+        // Pose Z difference > 5m almost certainly means a bad STD match or
+        // extreme accumulated drift — reject rather than apply a huge Z jump.
+        // Must be checked before any goto that crosses non-trivial constructors.
+        {
+          double dz = (double)std_pre_pose.t_(2) - (double)cur_pose.t_(2);
+          if (std::abs(dz) > 5.0) {
+            LOG(INFO) << YELLOW << " ---> [Loop+STD]: Rejected — dZ too large"
+                      << " std_pre=" << std_pre_id
+                      << " dZ=" << std::fixed << std::setprecision(3) << dz << "m" << RESET;
+            goto fallback_icp;
+          }
+        }
+
+        {
+          // Z-only correction strategy:
+          // ESKF XY odometry is accurate — only Z drifts from IMU bias.
+          // Applying a full 6DOF STD transform to pose_from_corrected can cause
+          // large XY "teleportation" (seen: 15m jump in logs) because the triangle
+          // solver's XY also carries noise when matched frames are far apart.
+          //
+          // Instead: keep cur_pose's rotation and XY, correct only Z to match
+          // std_pre_pose's Z level.  GTSAM noise model has very large variance on
+          // XY and rotation → those DOFs are left to odometry; only Z is tightened.
+          double dz = (double)std_pre_pose.t_(2) - (double)cur_pose.t_(2);
+
+          gtsam::Pose3 pose_from_corrected(
+              gtsam::Rot3(cur_pose.R_.cast<double>()),            // keep ESKF rotation
+              gtsam::Point3(cur_pose.t_(0), cur_pose.t_(1),       // keep ESKF XY
+                            (double)std_pre_pose.t_(2)));          // correct Z only
+
+          gtsam::Pose3 pose_to = toGtsamPose(std_pre_pose);
+
+          // Noise ordering: [rx, ry, rz, tx, ty, tz].
+          // Large XY/rotation variance → those DOFs unconstrained by this factor.
+          // Tight Z variance → corrects accumulated IMU Z bias.
+          gtsam::Vector6 noise_vec;
+          noise_vec << 100.0, 100.0, 100.0,  // rx, ry, rz — essentially free
+                       100.0, 100.0, 0.04;   // tx, ty — free; tz σ=0.2m
+          auto noise = gtsam::noiseModel::Diagonal::Variances(noise_vec);
+
+          {
+            std::lock_guard<std::mutex> lock(mtx_loop_);
+            loop_index_queue_.emplace_back(std_pre_id, cur_id);
+            loop_pose_queue_.push_back(pose_to.between(pose_from_corrected));
+            loop_noise_queue_.push_back(noise);
+            loop_history_[cur_id] = std_pre_id;
+          }
+
+          flag_rebuild_.store(true);
+          LOG(INFO) << GREEN << " ---> [Loop+STD]: Accepted (Z-only)! cur=" << cur_id
+                    << " std_pre=" << std_pre_id
+                    << " score=" << std::fixed << std::setprecision(3) << loop_result.second
+                    << " dZ=" << std::fixed << std::setprecision(3) << dz << "m" << RESET;
+          return true;
+        }
+      }
+      fallback_icp:;
+    }
+  }
+
+  // ── Fallback: vanilla point ICP ───────────────────────────────────────────
+  CloudPtr cur_cloud(new PointCloudType());
+  CloudPtr pre_cloud(new PointCloudType());
+
+  buildLocalMap(cur_cloud, cur_id, 0);                      // current: single keyframe
+  buildLocalMap(pre_cloud, pre_id, g_loop_search_num);      // previous: wide neighbourhood
+
+  LOG(INFO) << YELLOW << " ---> [Loop]: Local maps built"
+            << " cur_cloud=" << cur_cloud->size()
+            << " pre_cloud=" << pre_cloud->size()
+            << " flag_rebuild=" << flag_rebuild_.load()
+            << RESET;
+
+  if (cur_cloud->size() < 300 || pre_cloud->size() < 1000) {
+    LOG(WARNING) << YELLOW << " ---> [Loop]: Candidate clouds too small ("
+                 << cur_cloud->size() << " / " << pre_cloud->size() << "), skipped." << RESET;
+    return false;
+  }
+
+  // ── Pose-based Z correction for ICP initial guess ────────────────────────
+  // The ESKF accumulates Z drift (IMU bias), so cur_pose.t_(2) ≠ pre_pose.t_(2)
+  // even though both frames visited the same physical Z height.
+  // pre_pose is from early in the trajectory (little drift); cur_pose is drifted.
+  // Applying dz = pre_pose.t_(2) - cur_pose.t_(2) as the ICP initial guess
+  // shifts cur_cloud to the correct Z level before ICP runs.
+  //
+  // STD triangle transforms were tried but produce degenerate Z values (tens of
+  // metres) because the plane corners themselves are at drifted heights — the
+  // solver finds a transform that is "consistent" in 3D but carries a huge Z
+  // component. The pose difference is simpler and directly correct.
+  Eigen::Matrix4f initial_guess = Eigen::Matrix4f::Identity();
+  {
+    float dz = (float)(pre_pose.t_(2) - cur_pose.t_(2));
+    if (std::abs(dz) > 0.05f && std::abs(dz) < 5.0f) {
+      initial_guess(2, 3) = dz;
+      LOG(INFO) << YELLOW << " ---> [Loop]: Pose Z correction for ICP"
+                << " cur_z=" << std::fixed << std::setprecision(3) << cur_pose.t_(2)
+                << " pre_z=" << pre_pose.t_(2)
+                << " dz=" << dz << "m" << RESET;
+    }
+  }
+
+  // ── ICP alignment (GICP) ─────────────────────────────────────────────────
+  // GICP (Generalized ICP) estimates local covariance structure around each
+  // point, making it far more robust to Z drift than vanilla point-to-point
+  // ICP — flat floors no longer cause Z to "slide" unconstrained.
+  pcl::GeneralizedIterativeClosestPoint<PointType, PointType> icp;
+  icp.setMaxCorrespondenceDistance(3.0);
+  icp.setMaximumIterations(100);
+  icp.setTransformationEpsilon(1e-6);
+  icp.setEuclideanFitnessEpsilon(1e-6);
+
+  icp.setInputSource(cur_cloud);
+  icp.setInputTarget(pre_cloud);
+  CloudPtr unused(new PointCloudType());
+  icp.align(*unused, initial_guess);
+
+  if (!icp.hasConverged() || icp.getFitnessScore() > g_loop_fitness_score) {
+    LOG(INFO) << YELLOW << " ---> [Loop]: ICP rejected (converged="
+              << icp.hasConverged()
+              << ", score=" << icp.getFitnessScore() << ")." << RESET;
+    std::lock_guard<std::mutex> lock(mtx_loop_);
+    if (++loop_failed_attempts_[cur_id] >= 3) {
+      loop_history_[cur_id] = -1;   // -1 = exhausted; detectLoop skips it
+      LOG(WARNING) << YELLOW << " ---> [Loop]: Giving up on cur=" << cur_id
+                   << " after 3 failed attempts." << RESET;
+    }
+    return false;
+  }
+
+  LOG(INFO) << GREEN << " ---> [Loop]: Accepted via ICP! cur=" << cur_id
+            << " pre=" << pre_id
+            << " score=" << icp.getFitnessScore() << RESET;
+
+  // ── Compute pose correction ───────────────────────────────────────────────
   Eigen::Affine3f T_correction(icp.getFinalTransformation());
   Eigen::Affine3f T_wrong    = Eigen::Affine3f::Identity();
   T_wrong.linear()           = cur_pose.R_;
@@ -498,10 +755,12 @@ bool SuperLIOLoop::performLoopClosure()
   auto noise = gtsam::noiseModel::Diagonal::Variances(noise_vec);
 
   // ── Push to queues (consumed by main thread in addLoopFactor) ─────────────
+  // BetweenFactor(tar=pre, src=cur, Z) where Z = T_pre^{-1} * T_cur_corrected
+  // = pose_to.between(pose_from) — relative transform in pre's local frame.
   {
     std::lock_guard<std::mutex> lock(mtx_loop_);
-    loop_index_queue_.emplace_back(cur_id, pre_id);
-    loop_pose_queue_.push_back(pose_from.between(pose_to));
+    loop_index_queue_.emplace_back(pre_id, cur_id);   // tar=pre first, src=cur second
+    loop_pose_queue_.push_back(pose_to.between(pose_from));
     loop_noise_queue_.push_back(noise);
     loop_history_[cur_id] = pre_id;
   }
@@ -518,15 +777,19 @@ bool SuperLIOLoop::detectLoop(int* curID, int* preID)
   double latest_stamp;
   {
     std::lock_guard<std::mutex> lock(mtx_kf_);
-    if (keyframes_.size() < 2) return false;
+    if (keyframes_.size() < 3) return false;   // need at least n_kf-2 >= 1
     *positions_copy = *kf_positions_;
     n_kf            = static_cast<int>(keyframes_.size());
     latest_stamp    = keyframes_.back().timestamp;
   }
 
-  int loop_key_cur = n_kf - 1;
+  // Use n_kf-2 (second-most-recent) so the STD thread has always processed
+  // this keyframe by the time the loop thread inspects it. The off-by-one
+  // (kf_stds_.size()==cur_id) is eliminated at the cost of 0.5m latency.
+  int loop_key_cur = n_kf - 2;
+  if (loop_key_cur < 1) return false;
 
-  // Avoid re-detecting a loop we already found for this keyframe.
+  // Avoid re-detecting a loop we already found (or exhausted) for this keyframe.
   {
     std::lock_guard<std::mutex> lock(mtx_loop_);
     if (loop_history_.count(loop_key_cur)) return false;
@@ -542,17 +805,37 @@ bool SuperLIOLoop::detectLoop(int* curID, int* preID)
     positions_copy->points[loop_key_cur],
     g_loop_search_radius, indices, sq_dists);
 
+  // Use cur_id's own timestamp for the gap check — not back()'s stamp,
+  // which is 1 frame newer and would slightly overestimate the time gap.
+  double cur_stamp = 0.0;
+  {
+    std::lock_guard<std::mutex> lock(mtx_kf_);
+    cur_stamp = keyframes_[loop_key_cur].timestamp;
+  }
+
   int loop_key_pre = -1;
   {
     std::lock_guard<std::mutex> lock(mtx_kf_);
     for (int idx : indices) {
-      double stamp_diff = latest_stamp - keyframes_[idx].timestamp;
+      double stamp_diff = cur_stamp - keyframes_[idx].timestamp;
       if (stamp_diff > g_loop_search_time_diff) {
         loop_key_pre = idx;
         break;
       }
     }
   }
+
+  double selected_stamp_diff = -1.0;
+  if (loop_key_pre >= 0) {
+    std::lock_guard<std::mutex> lock(mtx_kf_);
+    selected_stamp_diff = cur_stamp - keyframes_[loop_key_pre].timestamp;
+  }
+
+  LOG(INFO) << YELLOW << " ---> [Detect]: cur=" << loop_key_cur
+            << " radius_candidates=" << indices.size()
+            << " selected_pre=" << loop_key_pre
+            << " stamp_diff=" << std::fixed << std::setprecision(1) << selected_stamp_diff
+            << RESET;
 
   if (loop_key_pre == -1 || loop_key_pre == loop_key_cur) return false;
 
@@ -654,6 +937,15 @@ void SuperLIOLoop::publishLoopConstraints()
 {
   if (!pub_loop_constraints_) return;
 
+  // Snapshot loop_history_ under mtx_loop_ FIRST — never hold both locks at once.
+  // (Acquiring mtx_kf_ while holding mtx_loop_ would invert the lock order used
+  // elsewhere and create a potential deadlock with performLoopClosure().)
+  std::unordered_map<int, int> history_snap;
+  {
+    std::lock_guard<std::mutex> lk(mtx_loop_);
+    history_snap = loop_history_;
+  }
+
   std::lock_guard<std::mutex> lock(mtx_kf_);
   int n = static_cast<int>(keyframes_.size());
   if (n == 0) return;
@@ -684,25 +976,22 @@ void SuperLIOLoop::publishLoopConstraints()
   edges.color.r  = 0.9f; edges.color.g = 0.0f;
   edges.color.b  = 0.9f; edges.color.a = 1.0f;
 
-  {
-    std::lock_guard<std::mutex> lk(mtx_loop_);
-    for (const auto& [from, to] : loop_history_) {
-      if (from >= n || to >= n) continue;
+  for (const auto& [from, to] : history_snap) {
+    if (from >= n || to >= n) continue;
 
-      geometry_msgs::msg::Point pf, pt_msg;
-      pf.x = keyframes_[from].pose.t_(0);
-      pf.y = keyframes_[from].pose.t_(1);
-      pf.z = keyframes_[from].pose.t_(2);
+    geometry_msgs::msg::Point pf, pt_msg;
+    pf.x = keyframes_[from].pose.t_(0);
+    pf.y = keyframes_[from].pose.t_(1);
+    pf.z = keyframes_[from].pose.t_(2);
 
-      pt_msg.x = keyframes_[to].pose.t_(0);
-      pt_msg.y = keyframes_[to].pose.t_(1);
-      pt_msg.z = keyframes_[to].pose.t_(2);
+    pt_msg.x = keyframes_[to].pose.t_(0);
+    pt_msg.y = keyframes_[to].pose.t_(1);
+    pt_msg.z = keyframes_[to].pose.t_(2);
 
-      nodes.points.push_back(pf);
-      nodes.points.push_back(pt_msg);
-      edges.points.push_back(pf);
-      edges.points.push_back(pt_msg);
-    }
+    nodes.points.push_back(pf);
+    nodes.points.push_back(pt_msg);
+    edges.points.push_back(pf);
+    edges.points.push_back(pt_msg);
   }
 
   marker_array.markers.push_back(nodes);
@@ -748,7 +1037,7 @@ void SuperLIOLoop::publishCorrectedPath()
 
 void SuperLIOLoop::stdDescriptorThread()
 {
-  while (!std_thread_stop_.load()) {
+  while (true) {
     pcl::PointCloud<pcl::PointXYZI>::Ptr cloud;
 
     {
@@ -760,6 +1049,17 @@ void SuperLIOLoop::stdDescriptorThread()
     }
 
     if (!cloud) {
+      {
+        std::lock_guard<std::mutex> lock(mtx_std_queue_);
+        size_t depth = std_cloud_queue_.size();
+        if (depth > 5) {
+          LOG(WARNING) << YELLOW << " ---> [STD]: Queue backing up depth="
+                       << depth << RESET;
+        }
+      }
+      // Only exit after the queue is fully drained — not just when the stop
+      // flag is set, so we don't silently drop queued clouds on shutdown.
+      if (std_thread_stop_.load()) break;
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
       continue;
     }
@@ -767,21 +1067,32 @@ void SuperLIOLoop::stdDescriptorThread()
     down_sampling_voxel(*cloud, std_cfg_.ds_size_);
 
     std::vector<STDesc> stds;
-    std_manager_.GenerateSTDescs(cloud, stds);
-
-    // Temporary debug — remove after tuning
-    LOG(INFO) << YELLOW << " ---> [STD DEBUG] planes="
-              << (std_manager_.plane_cloud_vec_.empty() ? 0 
-                  : std_manager_.plane_cloud_vec_.back()->size())
-              << " corners="
-              << (std_manager_.corner_cloud_vec_.empty() ? 0
-                  : std_manager_.corner_cloud_vec_.back()->size())
-              << " descs=" << stds.size() << RESET;
-
-    std_manager_.AddSTDescs(stds);
     {
-      std::lock_guard<std::mutex> lock(mtx_std_queue_);
+      std::unique_lock<std::shared_mutex> lock(mtx_std_manager_);
+      std_manager_.GenerateSTDescs(cloud, stds);
+
+      LOG(INFO) << YELLOW << " ---> [STD DEBUG] planes="
+                << (std_manager_.plane_cloud_vec_.empty() ? 0
+                    : std_manager_.plane_cloud_vec_.back()->size())
+                << " corners="
+                << (std_manager_.corner_cloud_vec_.empty() ? 0
+                    : std_manager_.corner_cloud_vec_.back()->size())
+                << " descs=" << stds.size() << RESET;
+
+      std_manager_.AddSTDescs(stds);
       kf_stds_.push_back(stds);
+
+      // Diagnostic: verify frame_id_ vs plane_cloud_vec_ alignment.
+      // frame_id_ in descriptors = plane_cloud_vec_ index (both 0-based).
+      // After AddSTDescs, current_frame_id_ = plane_cloud_vec_.size().
+      // expected_offset should always be 0 — if it's 1, there IS an off-by-one.
+      LOG(INFO) << YELLOW << " ---> [STD] frame_id offset check:"
+                << " current_frame_id_=" << std_manager_.current_frame_id_
+                << " plane_cloud_vec_.size()=" << std_manager_.plane_cloud_vec_.size()
+                << " kf_stds_.size()=" << kf_stds_.size()
+                << " expected_offset=" << (std_manager_.current_frame_id_
+                                           - (int)std_manager_.plane_cloud_vec_.size())
+                << RESET;
     }
 
     LOG(INFO) << GREEN << " ---> [STD] cloud_size=" << cloud->size()
@@ -795,15 +1106,13 @@ void SuperLIOLoop::stdDescriptorThread()
 
 void SuperLIOLoop::saveSTDDatabase()
 {
-  // Drain the queue before saving — any clouds still pending would be missing
-  // from the database if we save immediately.
-  LOG(INFO) << YELLOW << " ---> [STD] Waiting for descriptor thread to drain..." << RESET;
-  while (true) {
-    std::lock_guard<std::mutex> lock(mtx_std_queue_);
-    if (std_cloud_queue_.empty()) break;
-  }
-  // One extra cycle for the thread to finish its current GenerateSTDescs call.
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  // Stop the STD thread and join it — this is the only safe barrier.
+  // The thread drains the queue internally before exiting (loop checks
+  // std_thread_stop_ after each cloud), so no extra sleep is needed.
+  // The destructor's joinable() guard prevents a double-join.
+  LOG(INFO) << YELLOW << " ---> [STD] Stopping descriptor thread before save..." << RESET;
+  std_thread_stop_.store(true);
+  if (std_thread_.joinable()) std_thread_.join();
 
   std::string db_dir = g_save_map_dir + "/std_db";
   LOG(INFO) << YELLOW << " ---> [STD] Saving database to: " << db_dir << RESET;
